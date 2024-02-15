@@ -34,7 +34,7 @@ def get_args():
     # ANN Train Setting
     ########################################
     g_train = parser.add_argument_group('Train')
-    g_train.add_argument('--epochs', default=100, type=int)  # 200
+    g_train.add_argument('--epochs', default=200, type=int)  # 200
     ## optimizer
     g_train.add_argument('--optimizer', default='sgd')
     g_train.add_argument('--opt_wd', default=5e-4, type=float)
@@ -50,7 +50,7 @@ def get_args():
     g_train.add_argument('--warmup_t', default=3, type=int)
     g_train.add_argument('--warmup_lr_init', default=1e-5, type=float)
     ## multistep sch
-    g_train.add_argument('--lr_steps', default=[30, 60, 80], type=list)  # 60, 120, 160
+    g_train.add_argument('--lr_steps', default=[60, 120, 160], nargs='*', type=int)  # 60, 120, 160
     g_train.add_argument('--gamma', default=0.2, type=float)
 
     ########################################
@@ -74,16 +74,22 @@ def get_snn_args():
     ########################################
     g_snn = parser.add_argument_group('SNN')
     g_snn.add_argument('train_dir')
-    g_snn.add_argument('--timestep', default=2048)
-    g_snn.add_argument('--ann', default=0, type=int)  # boolean
-    g_snn.add_argument('--fire_plot', default=0, type=int)  # boolean
+    g_snn.add_argument('--timestep', default=3000, type=int)
+    g_snn.add_argument('--burnin', default=500, type=int)
+    g_snn.add_argument('--batch_size', default=500, type=int)
 
     ########################################
     # ANN2SNN
     ########################################
     g_convert = parser.add_argument_group('convert')
     g_convert.add_argument('--percentile', default=0.999, type=float)
+    g_convert.add_argument('--pooling', default="avg", choices=["avg", "rand"])
 
+    ########################################
+    # BaysianSpikeFusion
+    ########################################
+    g_bsf = parser.add_argument_group('BSF')
+    g_bsf.add_argument('--hps', default="grid", choices=["grid", "emp"], description="hyperparameter search")
 
     args = parser.parse_args()
 
@@ -91,6 +97,14 @@ def get_snn_args():
 
 def get_save_dir(args):
     conditions = "{}_{}".format(args.dataset, args.model)
+    session_dir = datetime.now().strftime("%Y-%m-%d_%H:%M:%S")
+
+    save_dir = os.path.join(args.root, conditions, str(args.ic_index), session_dir)
+
+    return conditions, save_dir
+
+def get_save_snn_dir(args):
+    conditions = "{}_{}_{}".format(args.dataset, args.model, args.ic_index)
     session_dir = datetime.now().strftime("%Y-%m-%d_%H:%M:%S")
 
     save_dir = os.path.join(args.root, conditions, str(args.ic_index), session_dir)

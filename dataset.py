@@ -50,59 +50,7 @@ def dataloader_factory(args):
                          mode='batch', 
                          label_smoothing=0.1,
                          num_classes=num_classes)
-        mixup_fn = Mixup(**mixup_arg)  
-    # collate_fn = None
-    # mixup_fn = None
-    # if args.mixup > 0:
-    #     mixup_arg = dict(mixup_alpha=args.mixup,
-    #                      cutmix_alpha=1.0, 
-    #                      cutmix_minmax=None, 
-    #                      prob=1.0, 
-    #                      switch_prob=0.5, 
-    #                      mode='batch', 
-    #                      label_smoothing=0.1,
-    #                      num_classes=num_classes)
-    #     if args.dataset == "imagenet":
-    #         collate_fn = FastCollateMixup(**mixup_arg)
-    #     else:
-    #         mixup_fn = Mixup(**mixup_arg)
-
-    # if args.dataset == "imagenet":
-    #     if val_dataset is not None:
-    #         val_dataloader = create_loader(val_dataset,
-    #                                        input_size=input_shape,
-    #                                        batch_size=args.batch_size,
-    #                                        is_training=False,
-    #                                        use_prefetcher=True,
-    #                                        num_workers=args.num_workers,
-    #                                        pin_memory=args.pin_memory)
-    #     train_dataloader = create_loader(train_dataset,
-    #                                      input_size=input_shape,
-    #                                      batch_size=args.batch_size,
-    #                                      is_training=True,
-    #                                      use_prefetcher=True,
-    #                                      re_prob=0.25,
-    #                                      re_mode='pixel',
-    #                                      re_count=1,
-    #                                      interpolation='bicubic',
-    #                                      auto_augment='rand-m9-mstd0.5-inc1',
-    #                                      num_workers=args.num_workers,
-    #                                      collate_fn=collate_fn,
-    #                                      pin_memory=args.pin_memory)
-        
-    # else:
-    #     train_dataloader = DataLoader(train_dataset,
-    #                                   shuffle=True, 
-    #                                   batch_size=args.batch_size, 
-    #                                   num_workers=args.num_workers, 
-    #                                   pin_memory=args.pin_memory,
-    #                                   drop_last=True)
-    #     if val_dataset is not None:
-    #         val_dataloader = DataLoader(val_dataset,
-    #                                     shuffle=True, 
-    #                                     batch_size=args.batch_size, 
-    #                                     num_workers=args.num_workers, 
-    #                                     pin_memory=args.pin_memory)
+        mixup_fn = Mixup(**mixup_arg)
 
     train_dataloader = DataLoader(train_dataset,
                                   shuffle=True, 
@@ -252,24 +200,9 @@ def get_imagenet_dataset(args):
     if args.snn:
         train_transform = transforms.Compose([
             transforms.ToTensor(),
-            transforms.Normalize((0.4914, 0.4822, 0.4465), (0.2023, 0.1994, 0.2010))
+            transforms.Normalize((0.485, 0.456, 0.406), (0.229, 0.224, 0.225))
         ])
     else:
-        # train_transform = create_transform(
-        #     input_size=224,
-        #     is_training=True,
-        #     auto_augment='rand-m9-mstd0.5-inc1',
-        #     re_prob=0.25,
-        #     re_mode='pixel',
-        #     re_count=1,
-        #     interpolation='bicubic',
-        # )
-        # train_transform = transforms.Compose([
-        #     transforms.RandomResizedCrop(224),
-        #     transforms.RandomHorizontalFlip(),
-        #     transforms.ToTensor(),
-        #     transforms.Normalize((0.4914, 0.4822, 0.4465), (0.2023, 0.1994, 0.2010))
-        # ])
         train_transform = A.Compose([
             A.RandomResizedCrop(224, 224),
             A.HorizontalFlip(),
@@ -284,10 +217,7 @@ def get_imagenet_dataset(args):
         transforms.ToTensor(),
         transforms.Normalize((0.485, 0.456, 0.406), (0.229, 0.224, 0.225)),
     ])
-
-    # train = torchvision.datasets.ImageNet(root=os.path.join(args.data_path, 'imagenet'),
-    #                                       split='train',
-    #                                       transform=train_transform)
+    
     train = Imagenet_A_dataset(root=os.path.join(args.data_path, 'imagenet'),
                                split='train',
                                transform=train_transform)

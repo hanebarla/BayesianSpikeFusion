@@ -30,6 +30,8 @@ def merge_and_normalize_dense(dense, bn, scale_factor, prev_factor):
 def merge_and_normalize_conv(conv, bn, scale_factor, prev_factor):
     w = conv.weight
     b = conv.bias
+    if b is None:
+        b = torch.zeros(conv.out_channels, device=w.device, dtype=w.dtype)
     mean = bn.running_mean
     var_sqrt = torch.sqrt(bn.running_var + bn.eps)
     beta = bn.weight

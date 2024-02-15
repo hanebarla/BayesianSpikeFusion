@@ -23,15 +23,14 @@ def plot_train_curv(losses, accs, ic_index, savedir):
     epochs = np.arange(len(losses[0]))
     ax1.plot(epochs, losses[0], label='train')
     ax1.plot(epochs, losses[1], label='val')
-    if ic_index != -1:
-        ax1.plot(epochs, losses[1][-1], label='val {}'.format(-1))
     ax1.set_ylabel('Loss')
     ax1.legend()
 
-    ax2.plot(epochs, accs[0], label='train')
+    ax2.plot(epochs, accs[0][-1], label='train {}'.format(ic_index))
     ax2.plot(epochs, accs[1][ic_index], label='val {}'.format(ic_index))
     if ic_index != -1:
-        ax1.plot(epochs, losses[1][-1], label='val {}'.format(-1))
+        ax2.plot(epochs, accs[0][-1], label='train {}'.format(-1))
+        ax2.plot(epochs, accs[1][-1], label='val {}'.format(-1))
     ax2.set_ylabel('Accuracy')
 
     ax2.set_xlabel('epoch')

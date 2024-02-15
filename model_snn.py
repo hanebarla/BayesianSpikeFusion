@@ -28,7 +28,6 @@ class SpikingModule(torch.nn.Module):
         self.spikecount = 0
         self.inputs_float = inputs_float
         self.spikecount_multiplier = MAC_ENE / AC_ENE if inputs_float else AC_ENE / AC_ENE
-        print(self.spikecount_multiplier)
             
 
     def forward(self, x, f, *args):
