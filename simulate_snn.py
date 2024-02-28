@@ -1,55 +1,106 @@
 import os, argparse
+import csv
+
+from tqdm import trange
 import torch
 import torch.nn.functional as F
 import numpy as np
-import csv
 
-from dataset import dataset_factory
+from argument import get_snn_args, load_args, get_save_snn_dir
+from logger import create_logger
+from dataset import dataloader_factory
 from model_ann import model_factory
 from model_snn import create_model_snn
-from lsm import quation_LSM
-from tqdm import trange
-from threshold import vth_func_factory
+from ann2snn import convert
 
+def main():
+    snn_args = get_snn_args()
+    args = load_args(os.path.join(snn_args.train_dir, "command.json"))
+    args.snn = True
+    args.batch_size = snn_args.batch_size
 
-parser = argparse.ArgumentParser()
-parser.add_argument('model', default='vgg11', type=str)
-parser.add_argument('dataset', default='cifar10', type=str)
-parser.add_argument('alpha_mode', type=str)
-parser.add_argument('--vth', default="None", type=str)
-parser.add_argument('--ic_index', type=int, default=-1)
-parser.add_argument('--sim_time', type=int, default=3000)
-parser.add_argument('--plot_alpha', type=int, default=1)
-parser.add_argument('--encoder', default="direct")  # direct, bernoulli, dither, dither_bernoulli
-args = parser.parse_args()
+    conditions, _ = get_save_snn_dir(args)
 
+    if not os.path.exists(os.path.join(snn_args.train_dir, "snn")):
+        os.makedirs(os.path.join(snn_args.train_dir, "snn"))
 
-BURNIN = 500
+    # create logger
+    logger = create_logger(snn_args.train_dir, conditions, 'simulate.txt'.format(snn_args.hps))
+    logger.info("[ANN Args]: {}".format(str(args.__dict__)))
+    logger.info("[SNN Args]: {}".format(str(snn_args.__dict__)))
 
-def encoder(images, img_err, mode="bernoulli"):
-    print(mode)
-    if mode == "direct":
-        return images, img_err
-    elif mode == "bernoulli":
-        return torch.bernoulli(images), img_err
-    elif "dither" in mode:
-        b, c, H, W = images.size()
-        new_images = torch.zeros_like(images)
-        err = torch.zeros((b, c), device=images.device)
-        for h in range(H):
-            for w in range(W):
-                tmp_value = images[:,:,h,w] + img_err[:,:,h,w] + err
-                if "bernoulli" in mode:
-                    new_images[:,:,h,w] = torch.bernoulli(torch.clamp(tmp_value, 0.0, 1.0))
-                else:
-                    new_images[:,:,h,w] = tmp_value > 0.5
-                err -= new_images[:,:,h,w]
-                err += images[:,:,h,w]    
-        return new_images, img_err
+    # get Device
+    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+    device_cnt = torch.cuda.device_count()
+    logger.info("[Device]: {}".format(device))
+    logger.info("[Device Count]: {}".format(device_cnt))
+
+    # get Dataloader
+    train_dataloader, val_dataloader, test_dataloader, num_classes, in_shapes, _ = dataloader_factory(args)
+    logger.info("Mixup: {}".format(False))
+
+    # get ANN model
+    ann_model = model_factory(args, num_classes, in_shapes)
+    logger.info("[model]: {}".format(str(ann_model)))
+    checkpoint = torch.load(os.path.join(snn_args.train_dir, "checkpoint.pth"))
+    logger.info("ANN Accuracy: {}".format(checkpoint["acc"]))
+    ann_model.load_state_dict(checkpoint["state_dict"])
+
+    # ann to snn
+    snn_path = os.path.join(snn_args.train_dir, "snn.pth")
+    if os.path.exists(snn_path):
+        snn_state_dict = torch.load(snn_path)
+        snn = create_model_snn(model=ann_model, batch_size=snn_args.batch_size, input_shape=in_shapes)
+        snn.load_state_dict(snn_state_dict["state_dict"])
+        logger.info("SNN model already exists")
     else:
-        raise NotImplementedError(mode)
+        snn = convert(args, snn_args, ann_model, train_dataloader, in_shapes, device, logger)
+        logger.info("[SNN]: {}".format(str(snn)))
+    snn.to(device)
+    snn.eval()
 
+    # simulate
+    simulate(snn, train_dataloader, snn_args.timestep, num_classes, snn_args.train_dir, device)
+    
+def simulate(snn, train_dataloader, sim_time, num_classes, save_dir, device):
+    for i, data in enumerate(train_dataloader):
+        images, labels = data
+        images = images.to(device)
+        labels = labels.to(device)
+        snn.reset()
+        
+        _out_spikes = simulate_iter(snn, images, sim_time, num_classes, device)
+        
+        save_dict = {
+            "labels": labels.cpu().detach().numpy().copy()
+        }
 
+        # np.savez_compressed(os.path.join(save_dir, "original", "labels_{}.npz".format(i)), l=labels.cpu().detach().numpy().copy())
+        for index, out in _out_spikes.items():
+            if index == -1:
+                save_dict["final"] = out.cpu().detach().numpy().copy()
+            else:
+                save_dict["mid"] = out.cpu().detach().numpy().copy()
+            # np.savez_compressed(os.path.join(save_dir, "original", "{}_output_{}.npz".format(index, i)), o=out.cpu().detach().numpy().copy())
+        np.savez_compressed(os.path.join(save_dir, "snn", "output_{}.npz".format(i)), **save_dict)
+
+@torch.no_grad()
+def simulate_iter(snn, images, sim_time, num_classes, device):
+    batch_size = images.size(0)
+
+    out_spikes = {}
+    for index in snn.classifiers.keys():
+        out_spikes[int(index)] = torch.zeros(sim_time, batch_size, num_classes, device=device)
+
+    for t in trange(sim_time):
+        outputs = snn(images)
+
+        for index, out in outputs.items():
+            out_spikes[int(index)][t,:,:] = out
+
+    return out_spikes
+
+"""
 def simulate_snn(ic_index, work_dir, dataset_dir, sim_time):
     device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
     print(device)
@@ -58,7 +109,7 @@ def simulate_snn(ic_index, work_dir, dataset_dir, sim_time):
     print(" --- start snn simulation --- ")
   
     batch_size = 500
-    train_dataloader, test_dataloader, num_classes, input_shape = dataset_factory(args.dataset, dataset_dir, batch_size, normalize=False, augument=True)
+    train_dataloader, val_dataloader, test_dataloader, num_classes, input_shape = dataloader_factory(args.dataset, dataset_dir, batch_size, normalize=False, augument=True)
   
     ann_model = model_factory(model_kind=args.model, ic_index=ic_index, activation="relu", num_classes=num_classes, input_channel=input_shape[0])
     spiking_model = create_model_snn(model=ann_model, batch_size=batch_size, input_shape=input_shape)
@@ -67,11 +118,6 @@ def simulate_snn(ic_index, work_dir, dataset_dir, sim_time):
     spiking_model.load_state_dict(torch.load(os.path.join(work_dir, "snn.pth")))
     
     tau = 0.5
-    vth_func = vth_func_factory(args.vth, tau, num_classes)
-    
-    if vth_func is not None:
-        with open(os.path.join(work_dir, "vth.csv"), "w") as f:
-            print("vth file init")
   
     ann_model.to(device)
     ann_model.eval()
@@ -100,7 +146,6 @@ def simulate_snn(ic_index, work_dir, dataset_dir, sim_time):
         mse_fusion = torch.zeros(sim_time, device=device)
         mse_mid = torch.zeros(sim_time, device=device)
         tot = 0
-        print(vth_func)
   
         for i, (images, labels) in enumerate(test_dataloader):
             images = images.to(device)
@@ -111,16 +156,10 @@ def simulate_snn(ic_index, work_dir, dataset_dir, sim_time):
 
             ann_pred = ann_model(images)
             ann_pred[-1] = F.softmax(ann_pred[-1], 1)
-            
-            vth = 1.0
-            spiking_model.set_vth(vth=vth)
-            if str(vth_func) == "automaton":
-                vth_func.state = 0
   
             tot += labels.size(0)
             print(tot)
-  
-            vth_list = [vth]
+
             count = {}
             fire_burnin = {}
             outputs_cnt = {}
@@ -129,10 +168,8 @@ def simulate_snn(ic_index, work_dir, dataset_dir, sim_time):
                 fire_burnin[int(index)] = torch.zeros((BURNIN, batch_size, num_classes), device=device)
                 outputs_cnt[int(index)] = torch.zeros((sim_time, batch_size, num_classes), device=device)
   
-            img_err = torch.zeros_like(images)
             for t in trange(sim_time):
-                images_bin, img_err = encoder(images, img_err, mode=args.encoder)
-                outputs = spiking_model(images_bin)
+                outputs = spiking_model(images)
                 tmp1, tmp2, tmp3 = spiking_model.get_count(ic_index)
                 # if t+1 < BURNIN:
                 #   continue
@@ -179,29 +216,9 @@ def simulate_snn(ic_index, work_dir, dataset_dir, sim_time):
                 # mse_mid[t] += F.mse_loss(one_hot_label, count[ic_index]/N) * batch_size
                 mse_mid[t] += F.mse_loss(ann_pred[-1], count[ic_index]/N) * batch_size
                 
-                if vth_func is not None:
-                    # fired = torch.sum(torch.abs(outputs[index]), dim=1)
-                    # watchSpikeCount = min((torch.mean(fired)/vth).item()/(t+1), 1)  # mean fire count
-                    # vth = vth_func(watchSpikeCount, vth)
-                    entropy_time = int(tau * 1000)
-                    fire = torch.sum(fire_burnin[-1][-1-entropy_time:-1,:,:], dim=0)
-                    fire_rate = F.softmax(fire, dim=-1)
-                    entropy_per_node = -1 * fire_rate * torch.log2(fire_rate + 1e-5)
-                    entropy = torch.sum(entropy_per_node, dim=-1)
-                    entropy_mean = torch.mean(entropy)
-                    vth = vth_func(vth=vth, entropy=entropy_mean)
-                    spiking_model.set_vth(vth=vth)
-                    vth_list.append(vth)
-                
             for index, cnt in outputs_cnt.items():
-                # np.savez_compressed(os.path.join(work_dir,"{}_simulate_output_{}{}.npz".format(index, i, "_" + str(vth_func) if vth_func is not None else "")), o=cnt.cpu().detach().numpy().copy(), l=labels.cpu().detach().numpy().copy())
-                np.savez_compressed(os.path.join(work_dir,"{}_{}_simulate_output_{}{}.npz".format(args.alpha_mode, index, i, "_" + args.encoder)), o=cnt.cpu().detach().numpy().copy(), l=labels.cpu().detach().numpy().copy())
-                
-            if vth_func is not None:
-                with open(os.path.join(work_dir, "vth.csv"), "a") as f:
-                    writer = csv.writer(f)
-                    writer.writerow(vth_list)
-  
+                np.savez_compressed(os.path.join(work_dir,"{}_{}_simulate_output_{}.npz".format(args.alpha_mode, index, i)), o=cnt.cpu().detach().numpy().copy(), l=labels.cpu().detach().numpy().copy())
+
             # if tot >= 2000:
             #   break
   
@@ -228,17 +245,7 @@ def simulate_snn(ic_index, work_dir, dataset_dir, sim_time):
     print("mse_mid:", mse_mid)
     print("mse_fusion:", mse_fusion)
   
-    # np.savez(os.path.join(work_dir, "snn_result_{}{}.npz".format(args.alpha_mode, "_" + str(vth_func) if vth_func is not None else "")),
-    #          acc=acc,
-    #          acc_f=acc_fusion, 
-    #          acc_m=acc_mid, 
-    #          spikecount=spikecount_final, 
-    #          spikecount_f=spikecount, 
-    #          spikecount_m=spikecount_mid,
-    #          mse=mse,
-    #          mse_f=mse_fusion,
-    #          mse_m=mse_mid)
-    np.savez(os.path.join(work_dir, "snn_result_{}{}.npz".format(args.alpha_mode, "_" + args.encoder)),
+    np.savez(os.path.join(work_dir, "snn_result_{}.npz".format(args.alpha_mode)),
              acc=acc,
              acc_f=acc_fusion, 
              acc_m=acc_mid, 
@@ -248,11 +255,7 @@ def simulate_snn(ic_index, work_dir, dataset_dir, sim_time):
              mse=mse,
              mse_f=mse_fusion,
              mse_m=mse_mid)
+"""
   
 if   __name__ == "__main__":
-    work_dir = os.path.join("/home/work/thabara/sdn", "models", "sdn-{}_{}".format(args.model, args.dataset), "{}".format(args.ic_index))
-    # os.makedirs(work_dir, exist_ok=True)
-  
-    dataset_dir = os.path.join("/home/work/thabara/sdn", "datasets")
-  
-    simulate_snn(ic_index=args.ic_index, work_dir=work_dir, dataset_dir=dataset_dir, sim_time=args.sim_time)
+    main()

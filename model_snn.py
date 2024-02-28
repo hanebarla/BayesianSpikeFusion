@@ -16,7 +16,7 @@ def create_model_snn(model, batch_size, input_shape):
 
 
 class SpikingModule(torch.nn.Module):
-    def __init__(self, out_shape, alpha=0.01, inputs_float=False):
+    def __init__(self, out_shape, alpha=0.01, init_mem=0.0, inputs_float=False):
         super().__init__()
 
         self.out_shape = out_shape
@@ -26,6 +26,7 @@ class SpikingModule(torch.nn.Module):
         self.register_buffer('out', torch.zeros(self.out_shape))
         self.step = 0
         self.spikecount = 0
+        self.init_mem = init_mem
         self.inputs_float = inputs_float
         self.spikecount_multiplier = MAC_ENE / AC_ENE if inputs_float else AC_ENE / AC_ENE
             
@@ -59,6 +60,7 @@ class SpikingModule(torch.nn.Module):
 
     def reset(self):
         self.v.zero_()
+        self.v += self.init_mem
         self.spikecount = 0
 
     def get_count(self):
@@ -69,17 +71,19 @@ class SpikingModule(torch.nn.Module):
 
 
 class SpikingDense(SpikingModule):
-    def __init__(self, denseblock, batch_size):
+    def __init__(self, denseblock, batch_size, init_mem=0.0):
         self.out_shape = (batch_size, denseblock.main.out_features)
 
         if isinstance(denseblock.act, nn.LeakyReLU):
             super().__init__(
                 self.out_shape,
-                alpha=denseblock.act.negative_slope)
+                alpha=denseblock.act.negative_slope,
+                init_mem=init_mem)
         else:
             super().__init__(
                 self.out_shape,
-                alpha=None)
+                alpha=None,
+                init_mem=init_mem)
 
         self.weight = nn.Parameter(denseblock.main.weight)
         self.bias = nn.Parameter(denseblock.main.bias)
@@ -89,17 +93,19 @@ class SpikingDense(SpikingModule):
 
 
 class SpikingConv(SpikingModule):
-    def __init__(self, convblock, out_shape, batch_size, inputs_float=False):
+    def __init__(self, convblock, out_shape, batch_size, init_mem=0.0, inputs_float=False):
         self.out_shape = (batch_size,) + out_shape
         if isinstance(convblock.act, nn.LeakyReLU):
             super().__init__(
                 self.out_shape,
                 alpha=convblock.act.negative_slope,
+                init_mem=init_mem,
                 inputs_float=inputs_float)
         else:
             super().__init__(
                 self.out_shape,
                 alpha=None,
+                init_mem=init_mem,
                 inputs_float=inputs_float)
 
         self.weight = nn.Parameter(convblock.main.weight)
@@ -115,12 +121,13 @@ class SpikingConv(SpikingModule):
 
 
 class SpikingAvgPool(SpikingModule):
-    def __init__(self, out_shape, kernel_size, batch_size):
+    def __init__(self, out_shape, kernel_size, batch_size, init_mem=0.0):
         self.out_shape = (batch_size,) + out_shape
         self.kernel_size = kernel_size
         super().__init__(
             self.out_shape,
-            alpha=None)
+            alpha=None,
+            init_mem=init_mem,)
 
         self.kernel_size = kernel_size
         self.spikecount_multiplier = np.prod(kernel_size)
@@ -130,7 +137,7 @@ class SpikingAvgPool(SpikingModule):
 
 
 class SpikingResBlock(nn.Module):
-    def __init__(self, resblock, out_shape, batch_size):
+    def __init__(self, resblock, out_shape, batch_size, init_mem=0.0):
         super().__init__()
 
         self.stride = resblock.conv1.stride[0]
@@ -140,7 +147,7 @@ class SpikingResBlock(nn.Module):
 
         self.conv1_weight = nn.Parameter(resblock.conv1.weight)
         self.conv1_bias = nn.Parameter(resblock.conv1.bias)
-        self.conv1 = SpikingModule(self.out_shape, alpha=None)
+        self.conv1 = SpikingModule(self.out_shape, alpha=None, init_mem=init_mem)
 
         self.conv2 = nn.Conv2d(resblock.conv2.in_channels,
                                resblock.conv2.out_channels,
@@ -177,7 +184,7 @@ class SpikingResBlock(nn.Module):
     
 
 class SpikingResBlock2(nn.Module):
-    def __init__(self, resblock, out_shape, batch_size):
+    def __init__(self, resblock, out_shape, batch_size, init_mem=0.0):
         super().__init__()
 
         self.stride = resblock.convM.stride[0]
@@ -187,11 +194,11 @@ class SpikingResBlock2(nn.Module):
 
         self.conv1_weight = nn.Parameter(resblock.conv1.weight)
         self.conv1_bias = nn.Parameter(resblock.conv1.bias)
-        self.conv1 = SpikingModule(self.mid_shape, alpha=None)
+        self.conv1 = SpikingModule(self.mid_shape, alpha=None, init_mem=init_mem)
         
         self.convM_weight = nn.Parameter(resblock.convM.weight)
         self.convM_bias = nn.Parameter(resblock.convM.bias)
-        self.convM = SpikingModule(self.mid_shape, alpha=None)
+        self.convM = SpikingModule(self.mid_shape, alpha=None, init_mem=init_mem)
 
         self.conv2 = nn.Conv2d(resblock.conv2.in_channels,
                                resblock.conv2.out_channels,
@@ -231,7 +238,7 @@ class SpikingResBlock2(nn.Module):
 
 
 class SpikingSDN(nn.Module):
-    def __init__(self, ann, batch_size, initial_shape):
+    def __init__(self, ann, batch_size, initial_shape, init_mem=0.0):
         super().__init__()
 
         shape = initial_shape
@@ -244,18 +251,18 @@ class SpikingSDN(nn.Module):
                 shape = (module.main.out_channels, shape[1], shape[2])
                 if module.main.stride[0] == 2:
                     shape = (shape[0], int((shape[1]+module.main.padding[0]*2-module.main.kernel_size[0])/2)+1, int((shape[2]+module.main.padding[0]*2-module.main.kernel_size[0])/2)+1)
-                feature_layers.append(SpikingConv(module, shape, batch_size, True if cnt == 0 else False))
+                feature_layers.append(SpikingConv(module, shape, batch_size, init_mem, True if cnt == 0 else False))
                 cnt += 1
             elif isinstance(module, ResBlock):
                 shape = (module.conv1.out_channels, shape[1], shape[2])
                 if module.conv1.stride[0] == 2:
                     shape = (shape[0], int((shape[1]+module.conv1.padding[0]*2-module.conv1.kernel_size[0])/2)+1, int((shape[2]+module.conv1.padding[0]*2-module.conv1.kernel_size[0])/2)+1)
-                feature_layers.append(SpikingResBlock(module, shape, batch_size))
+                feature_layers.append(SpikingResBlock(module, shape, batch_size, init_mem))
             elif isinstance(module, ResBlock2):
                 shape = (module.convM.out_channels, shape[1], shape[2])
                 if module.convM.stride[0] == 2:
                     shape = (shape[0], int((shape[1]+module.convM.padding[0]*2-module.convM.kernel_size[0])/2)+1, int((shape[2]+module.convM.padding[0]*2-module.convM.kernel_size[0])/2)+1)
-                feature_layers.append(SpikingResBlock2(module, shape, batch_size))
+                feature_layers.append(SpikingResBlock2(module, shape, batch_size, init_mem))
             shapes.append(shape)
         self.feature = nn.ModuleList(feature_layers)
 
@@ -264,9 +271,9 @@ class SpikingSDN(nn.Module):
             shape = shapes[int(index)]
             pool_size = shape[1]
             classifiers[index] = nn.Sequential(
-                SpikingAvgPool((shape[0], 1, 1), pool_size, batch_size),
+                SpikingAvgPool((shape[0], 1, 1), pool_size, batch_size, init_mem),
                 nn.Flatten(),
-                SpikingDense(module[2], batch_size)
+                SpikingDense(module[2], batch_size, init_mem)
             )
         self.classifiers = nn.ModuleDict(classifiers)
 

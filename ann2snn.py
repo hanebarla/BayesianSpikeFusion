@@ -15,6 +15,7 @@ def main():
 
     save_dir = snn_args.train_dir
     args = load_args(os.path.join(save_dir, "command.json"))
+    args.batch_size = snn_args.batch_size
     # print(args)
     conditions, _ = get_save_dir(args)
 

@@ -89,7 +89,8 @@ def get_snn_args():
     # BaysianSpikeFusion
     ########################################
     g_bsf = parser.add_argument_group('BSF')
-    g_bsf.add_argument('--hps', default="grid", choices=["grid", "emp"], description="hyperparameter search")
+    g_bsf.add_argument('--init_mem', default=0.0, type=float)
+    g_bsf.add_argument('--hps', default="grid", choices=["grid", "emp"], help="hyperparameter search")
 
     args = parser.parse_args()
 

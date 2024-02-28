@@ -11,6 +11,8 @@ import numpy as np
 import os
 import time
 
+from chached_image_folder import CachedImageFolder
+
 
 def dataloader_factory(args):
     if args.dataset == "mnist":
@@ -96,7 +98,7 @@ def get_mnist_dataset(args):
 def get_cifar10_dataset(args):
     if args.snn:
         train_transform = transforms.Compose([
-            transforms.Totensor(),
+            transforms.ToTensor(),
             transforms.Normalize((0.4914, 0.4822, 0.4465), (0.2023, 0.1994, 0.2010))
         ])
     else:
@@ -196,6 +198,38 @@ class Imagenet_A_dataset(torchvision.datasets.ImageNet):
 #     test = torchvision.datasets.ImageNet(root=os.path.join(args.data_path, 'imagenet'), split='val', transform=test_transform)
 
 #     return train, test
+# def get_imagenet_dataset(args):
+#     if args.snn:
+#         train_transform = transforms.Compose([
+#             transforms.ToTensor(),
+#             transforms.Normalize((0.485, 0.456, 0.406), (0.229, 0.224, 0.225))
+#         ])
+#     else:
+#         train_transform = A.Compose([
+#             A.RandomResizedCrop(224, 224),
+#             A.HorizontalFlip(),
+#             A.ShiftScaleRotate(),
+#             A.HueSaturationValue(),
+#             A.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225]),
+#             A.pytorch.ToTensorV2()
+#         ])
+#     test_transform = transforms.Compose([
+#         transforms.Resize(256, interpolation=transforms.InterpolationMode.BICUBIC),
+#         transforms.CenterCrop(224),
+#         transforms.ToTensor(),
+#         transforms.Normalize((0.485, 0.456, 0.406), (0.229, 0.224, 0.225)),
+#     ])
+    
+#     train = Imagenet_A_dataset(root=os.path.join(args.data_path, 'imagenet'),
+#                                split='train',
+#                                transform=train_transform)
+    
+#     test = torchvision.datasets.ImageNet(root=os.path.join(args.data_path, 'imagenet'),
+#                                          split='val',
+#                                          transform=test_transform)
+    
+#     return train, test
+
 def get_imagenet_dataset(args):
     if args.snn:
         train_transform = transforms.Compose([
@@ -203,30 +237,32 @@ def get_imagenet_dataset(args):
             transforms.Normalize((0.485, 0.456, 0.406), (0.229, 0.224, 0.225))
         ])
     else:
-        train_transform = A.Compose([
-            A.RandomResizedCrop(224, 224),
-            A.HorizontalFlip(),
-            A.ShiftScaleRotate(),
-            A.HueSaturationValue(),
-            A.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225]),
-            A.pytorch.ToTensorV2()
-        ])
-    test_transform = transforms.Compose([
+        train_transform = create_transform(
+            input_size=224,
+            is_training=True,
+            color_jitter=0.4,
+            auto_augment="rand-m9-mstd0.5-inc1",
+            re_prob=0.25,
+            re_mode="pixel",
+            re_count=1,
+            interpolation="bicubic"
+        )
+    val_transform = transforms.Compose([
         transforms.Resize(256, interpolation=transforms.InterpolationMode.BICUBIC),
         transforms.CenterCrop(224),
         transforms.ToTensor(),
         transforms.Normalize((0.485, 0.456, 0.406), (0.229, 0.224, 0.225)),
     ])
-    
-    train = Imagenet_A_dataset(root=os.path.join(args.data_path, 'imagenet'),
-                               split='train',
-                               transform=train_transform)
-    
-    test = torchvision.datasets.ImageNet(root=os.path.join(args.data_path, 'imagenet'),
-                                         split='val',
-                                         transform=test_transform)
+
+    train = CachedImageFolder(os.path.join(args.data_path, 'imagenet'),
+                              "train_map.txt", "train.zip@/", 
+                              train_transform, cache_mode="part")
+    test = CachedImageFolder(os.path.join(args.data_path, 'imagenet'),
+                             "val_map.txt", "val.zip@/",
+                             val_transform, cache_mode="part")
     
     return train, test
+                              
 
 if __name__ == "__main__":
     from argument import get_args
