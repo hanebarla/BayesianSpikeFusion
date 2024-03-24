@@ -1,7 +1,7 @@
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
-
+from torch.autograd import Function
 import numpy as np
 
 
@@ -37,6 +37,62 @@ def flops_of_conv2d(conv, input_shape):
     out_shape = (conv.out_channels, out_h, out_w)
     return out_h * out_w * conv.weight.size().numel(), out_shape
 
+def isActivation(name):
+    if 'relu' in name.lower() or 'clip' in name.lower() or 'floor' in name.lower() or 'tcl' in name.lower():
+        return True
+    return False
+
+def replace_activation_by_floor(model, t):
+    for name, module in model._modules.items():
+        if hasattr(module, "_modules"):
+            model._modules[name] = replace_activation_by_floor(module, t)
+        if isActivation(module.__class__.__name__.lower()):
+            if hasattr(module, "up"):
+                print(module.up.item())
+                if t == 0:
+                    model._modules[name] = TCL()
+                else:
+                    model._modules[name] = MyFloor(module.up.item(), t)
+            else:
+                if t == 0:
+                    model._modules[name] = TCL()
+                else:
+                    model._modules[name] = MyFloor(8., t)
+    return model
+
+class GradFloor(Function):
+    @staticmethod
+    def forward(ctx, input):
+        return input.floor()
+
+    @staticmethod
+    def backward(ctx, grad_output):
+        return grad_output
+
+myfloor = GradFloor.apply
+class MyFloor(nn.Module):
+    def __init__(self, up=8., t=32):
+        super().__init__()
+        self.up = nn.Parameter(torch.tensor([up]), requires_grad=True)
+        self.t = t
+
+    def forward(self, x):
+        x = x / self.up
+        x = myfloor(x*self.t+0.5)/self.t
+        x = torch.clamp(x, 0, 1)
+        x = x * self.up
+        return x
+
+class TCL(nn.Module):
+    def __init__(self):
+        super().__init__()
+        self.up = nn.Parameter(torch.Tensor([4.]), requires_grad=True)
+    def forward(self, x):
+        x = F.relu(x, inplace='True')
+        x = self.up - x
+        x = F.relu(x, inplace='True')
+        x = self.up - x
+        return x
 
 class DenseBlock(nn.Module):
     def __init__(self,
@@ -253,7 +309,6 @@ class SDN(nn.Module):
             out[int(index)] = layer(y[int(index)])
 
         return out
-
 
 class VGG11(SDN):
     def __init__(self, ic_index, act, num_classes, batch_norm, input_channel):

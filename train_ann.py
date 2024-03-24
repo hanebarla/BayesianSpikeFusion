@@ -7,7 +7,7 @@ from timm.scheduler import CosineLRScheduler
 from timm.loss import LabelSmoothingCrossEntropy, SoftTargetCrossEntropy
 
 from dataset import dataloader_factory
-from model_ann import model_factory
+from model_ann import model_factory, replace_activation_by_floor
 from argument import get_args, get_save_dir, save_args, load_args
 from logger import create_logger
 from utils import save_checkpoint, plot_train_curv, get_time
@@ -76,14 +76,23 @@ def main():
     train_dataloader, val_dataloader, test_dataloader, num_classes, in_shapes, mixup_fn = dataloader_factory(args)
     logger.info("Mixup: {}".format(mixup_fn))
 
+    # in_shapes = (3, 224, 224)
+    # num_classes = 1000
     # get model
     model = model_factory(args, num_classes, in_shapes)
-    if device_cnt > 1:
-        model = nn.DataParallel(model)
     if args.resume != "":
         model.load_state_dict(checkpoint["state_dict"])
+    if args.pretrained != "":
+        logger.info("[pretrained]: {}".format(args.pretrained))
+        model.load_state_dict(torch.load(args.pretrained)["state_dict"], strict=False)
+    if device_cnt > 1:
+        model = nn.DataParallel(model)
+    if args.qcfs > 0:
+        logger.info("[qcfs L]: {}".format(args.qcfs))
+        model = replace_activation_by_floor(model, args.qcfs)
     logger.info("[model]: {}".format(str(model)))
     model.to(device)
+
 
     # caoculate loss_weight_goal
     shape = in_shapes

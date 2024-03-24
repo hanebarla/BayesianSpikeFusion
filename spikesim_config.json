@@ -1,0 +1,16 @@
+{
+    "xbar_size": 64,
+    "pe_per_tile": 8,
+    "n_pe": 8,
+    "energy": {
+        "xbar_ar": 1.76423,
+        "tile_buff": 397.0,
+        "temp_buff": 0.2,
+        "sub": 1.15e-6,
+        "adc": 2.03084,
+        "htree": 19.64,
+        "mux": 0.094245,
+        "mem_fetch": 4.64,
+        "neuron": 1.274
+    }
+}

@@ -17,6 +17,7 @@ from dataset import dataloader_factory
 from model_ann import model_factory
 from model_snn import create_model_snn
 from ann2snn import convert
+from utils import fix_model_state_dict
 
 def main():
     snn_args = get_snn_args()
@@ -46,7 +47,10 @@ def main():
     logger.info("[model]: {}".format(str(ann_model)))
     checkpoint = torch.load(os.path.join(snn_args.train_dir, "checkpoint.pth"))
     logger.info("ANN Accuracy: {}".format(checkpoint["acc"]))
-    ann_model.load_state_dict(checkpoint["state_dict"])
+    if list(checkpoint["state_dict"].keys())[0].startswith("module."):
+        ann_model.load_state_dict(fix_model_state_dict(checkpoint["state_dict"]))
+    else:
+        ann_model.load_state_dict(checkpoint["state_dict"])
 
     # ann to snn
     snn_path = os.path.join(snn_args.train_dir, "snn.pth")
@@ -62,13 +66,23 @@ def main():
     snn.eval()
 
     # simulate
-    # simulate(snn, train_dataloader, snn_args.timestep, num_classes, snn_args.train_dir, device)
+    if snn_args.init_mem == 0.0:
+        train_sim_dir = os.path.join(snn_args.train_dir, "train")
+    else:
+        train_sim_dir = os.path.join(snn_args.train_dir, "train_init_mem_{}".format(snn_args.init_mem))
+    if not os.path.exists(train_sim_dir):
+        os.makedirs(train_sim_dir)
+    # simulate(snn, train_dataloader, snn_args.timestep, num_classes, train_sim_dir, device)
 
     # hyperparameter search
-    hyperparameter_search(args, snn_args, num_classes)
+    logger.info("Hyperparameter search (Grid)")
+    # hyperparameter_search(args, snn_args, num_classes, "grid", train_sim_dir, logger)
+    logger.info("Hyperparameter search (Empirical)")
+    hyperparameter_search(args, snn_args, num_classes, "emp", train_sim_dir, logger)
 
     # linear approximation
     approximate(snn_args)
+    logger.info("Done")
 
 def simulate(snn, train_dataloader, sim_time, num_classes, save_dir, device):
     tot = 0
@@ -83,9 +97,9 @@ def simulate(snn, train_dataloader, sim_time, num_classes, save_dir, device):
             
         _out_spikes = simulate_iter(snn, images, sim_time, num_classes, device)
 
-        np.savez_compressed(os.path.join(save_dir, "train", "labels_{}.npz".format(i)), l=labels.cpu().detach().numpy().copy())
+        np.savez_compressed(os.path.join(save_dir, "labels_{}.npz".format(i)), l=labels.cpu().detach().numpy().copy())
         for index, out in _out_spikes.items():
-            np.savez_compressed(os.path.join(save_dir, "train", "{}_output_{}.npz".format(index, i)), o=out.cpu().detach().numpy().copy())
+            np.savez_compressed(os.path.join(save_dir, "{}_output_{}.npz".format(index, i)), o=out.cpu().detach().numpy().copy())
 
         tot += labels.size(0)
 
@@ -106,7 +120,7 @@ def simulate_iter(snn, images, sim_time, num_classes, device):
     return out_spikes
     
 
-def hyperparameter_search(args, snn_args, num_classes):
+def hyperparameter_search(args, snn_args, num_classes, hps, saved_dir, logger):
     files_in_train_dir = os.listdir(os.path.join(snn_args.train_dir, "train"))
     labels_file_path = [f for f in files_in_train_dir if "labels_" in f]
     exp_num = len(labels_file_path)
@@ -115,11 +129,12 @@ def hyperparameter_search(args, snn_args, num_classes):
     betas = np.zeros((snn_args.timestep, 101))
 
     for i, labels_file in enumerate(labels_file_path):
+        logger.info("Hyperparameter search: {}/{}".format(i+1, exp_num))
         label_path_index = labels_file.split("_")[1].split(".")[0]
-        final_output_path = os.path.join(snn_args.train_dir, "train", "-1_output_{}.npz".format(label_path_index))
-        mid_output_path = os.path.join(snn_args.train_dir, "train", "{}_output_{}.npz".format(args.ic_index, label_path_index))
+        final_output_path = os.path.join(saved_dir, "-1_output_{}.npz".format(label_path_index))
+        mid_output_path = os.path.join(saved_dir, "{}_output_{}.npz".format(args.ic_index, label_path_index))
 
-        labels = np.load(os.path.join(snn_args.train_dir, "train", labels_file))["l"]
+        labels = np.load(os.path.join(saved_dir, labels_file))["l"]
         labels = labels[np.newaxis,:,np.newaxis]
         final_output = np.load(final_output_path)["o"]
         final_count = np.cumsum(final_output, axis=0)
@@ -131,14 +146,14 @@ def hyperparameter_search(args, snn_args, num_classes):
 
         # hyperparameter search
         time_batch = 50
-        tmp_alphas = np.arange(0, 101, 1, dtype="float64")
+        tmp_alphas = np.arange(0, 101, 1, dtype="float32")
         prior_alphas = np.tile(tmp_alphas, (time_batch, snn_args.batch_size, num_classes, 1))
-        for t in range(int(snn_args.timestep//time_batch)):
-            if snn_args.hps == "grid":
+        for t in trange(int(snn_args.timestep//time_batch)):
+            if hps == "grid":
                 N = np.arange(t*time_batch+1,(t+1)*time_batch+1, 1)
                 N = N[:,np.newaxis,np.newaxis]
-                M = mid_count[t*time_batch:(t+1)*time_batch,:,:]
-                E = (final_count[t*time_batch:(t+1)*time_batch,:,:] / N) + 1e-16
+                M = final_count[t*time_batch:(t+1)*time_batch,:,:]
+                E = (mid_count[t*time_batch:(t+1)*time_batch,:,:] / N) + 1e-16
                 N = N[:,:,:,np.newaxis]
                 M = M[:,:,:,np.newaxis]
                 E = E[:,:,:,np.newaxis]
@@ -155,7 +170,7 @@ def hyperparameter_search(args, snn_args, num_classes):
                 accs = np.sum(pred == labels, axis=1)
                 best_alpha_index = np.argmax(accs, axis=-1)
                 best_alpha = tmp_alphas[best_alpha_index]
-            elif snn_args.hps == "emp":
+            elif hps == "emp":
                 N = np.arange(t*time_batch+1,(t+1)*time_batch+1, 1)
                 N = N[:,np.newaxis,np.newaxis]
                 M = final_count[t*time_batch:(t+1)*time_batch,:,:]
@@ -176,7 +191,6 @@ def hyperparameter_search(args, snn_args, num_classes):
 
     simtime = np.arange(snn_args.timestep)
     ys = alphas
-    np.savez(os.path.join(snn_args.train_dir, "alpha_output_{}.npz".format(snn_args.hps)), alpha=ys)
 
     fig = plt.figure(figsize=(8, 6))
     ax1 = fig.add_subplot(111)
@@ -184,13 +198,27 @@ def hyperparameter_search(args, snn_args, num_classes):
     fig = plt.figure()
     ax1 = fig.add_subplot(111)
     ax1.scatter(simtime, ys, c="r", s=5)
-    fig.savefig(os.path.join(snn_args.train_dir, "time_alpha_{}.svg".format(snn_args.hps)))
+    ax1.set_xlabel("Time Step")
+    ax1.set_ylabel(r"$\alpha$")
+
+    if snn_args.init_mem == 0.0:
+        np.savez(os.path.join(snn_args.train_dir, "alpha_output_{}.npz".format(hps)), alpha=ys)
+        fig.savefig(os.path.join(snn_args.train_dir, "time_alpha_{}.svg".format(hps)))
+    else:
+        np.savez(os.path.join(snn_args.train_dir, "alpha_output_{}_init_mem_{}.npz".format(hps, snn_args.init_mem), alpha=ys))
+        fig.savefig(os.path.join(snn_args.train_dir, "time_alpha_{}_init_mem_{}.svg".format(hps, snn_args.init_mem)))
+        # np.savez(os.path.join(snn_args.train_dir, "alpha_output_{}.npz".format(hps)), alpha=ys)
+    # fig.savefig(os.path.join(snn_args.train_dir, "time_alpha_{}.svg".format(hps)))
 
 
 def approximate(snn_args):
     xs = np.arange(snn_args.timestep)
     xs_unit = xs / snn_args.timestep
-    ys = np.load(os.path.join(snn_args.train_dir, "alpha_output_{}.npz".format(snn_args.hps)))["alpha"]
+    if snn_args.init_mem == 0.0:
+        ys = np.load(os.path.join(snn_args.train_dir, "alpha_output_{}.npz".format(snn_args.hps)))["alpha"]
+    else:
+        ys = np.load(os.path.join(snn_args.train_dir, "alpha_output_{}_init_mem_{}.npz".format(snn_args.hps, snn_args.init_mem)))["alpha"]
+    # ys = np.load(os.path.join(snn_args.train_dir, "alpha_output_{}.npz".format(snn_args.hps)))["alpha"]
 
     fig = plt.figure(figsize=(4.8, 3.75))
     # fig = plt.figure(figsize=(3.2, 2.5))
@@ -202,14 +230,22 @@ def approximate(snn_args):
             
     interpolate_f = interpolate.interp1d(interpolate_index, ys[interpolate_index], kind='linear')
     interpolated = interpolate_f(xs)
-    np.savez(os.path.join(snn_args.train_dir, "division_linear_alpha_{}.npz".format(snn_args.hps)), y=interpolated)
+    if snn_args.init_mem == 0.0:
+        np.savez(os.path.join(snn_args.train_dir, "division_linear_alpha_{}.npz".format(snn_args.hps)), y=interpolated)
+    else:
+        np.savez(os.path.join(snn_args.train_dir, "division_linear_alpha_{}_init_mem_{}.npz".format(snn_args.hps, snn_args.init_mem)), y=interpolated)
+    # np.savez(os.path.join(snn_args.train_dir, "division_linear_alpha_{}.npz".format(snn_args.hps)), y=interpolated)
 
     ax1.plot(xs, interpolated, c="b", label="approximation curve")
     ax1.set_xlabel("Time Step")
     ax1.set_ylabel(r"$\alpha$")
     ax1.legend()
     fig.tight_layout()
-    fig.savefig(os.path.join(snn_args.train_dir, "time_alpha_with_curve_{}.svg".format(snn_args.hps)))
+    if snn_args.init_mem == 0.0:
+        fig.savefig(os.path.join(snn_args.train_dir, "time_alpha_with_curve_{}.svg".format(snn_args.hps)))
+    else:
+        fig.savefig(os.path.join(snn_args.train_dir, "time_alpha_with_curve_{}_init_mem_{}.svg".format(snn_args.hps, snn_args.init_mem)))
+    # fig.savefig(os.path.join(snn_args.train_dir, "time_alpha_with_curve_{}.svg".format(snn_args.hps)))
 
 if __name__ == "__main__":
     main()

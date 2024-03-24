@@ -8,7 +8,7 @@ from model_ann import model_factory
 from model_snn import SpikingSDN
 from argument import get_args, get_snn_args, get_save_dir, load_args
 from logger import create_logger
-from utils import save_checkpoint
+from utils import save_checkpoint, fix_model_state_dict
 
 def main():
     snn_args = get_snn_args()
@@ -42,7 +42,10 @@ def main():
     # load trained ANN
     checkpoint = torch.load(os.path.join(save_dir, "checkpoint.pth"))
     logger.info("ANN Accuracy: {}".format(checkpoint["acc"]))
-    model.load_state_dict(checkpoint["state_dict"])
+    state_dict = checkpoint["state_dict"]
+    if "module" == list(state_dict.keys())[0][:6]:
+        state_dict = fix_model_state_dict(state_dict)
+    model.load_state_dict(state_dict)
     model.to(device)
 
     # ann to snn

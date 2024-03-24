@@ -1,3 +1,6 @@
+import os
+import time
+
 import torchvision
 import torchvision.transforms as transforms
 from torchvision.datasets import ImageFolder
@@ -7,11 +10,6 @@ from timm.data import create_transform, create_dataset, create_loader, resolve_d
 import albumentations as A
 from albumentations.pytorch import ToTensorV2
 import numpy as np
-
-import os
-import time
-
-from chached_image_folder import CachedImageFolder
 
 
 def dataloader_factory(args):
@@ -27,6 +25,10 @@ def dataloader_factory(args):
         train_dataset, test_dataset = get_cifar100_dataset(args)
         num_classes = 100
         input_shape = (3, 32, 32)
+    elif args.dataset == "tinyimagenet":
+        train_dataset, test_dataset = get_tinyimagenet_dataset(args)
+        num_classes = 200
+        input_shape = (3, 64, 64)
     elif args.dataset == "imagenet":
         train_dataset, test_dataset = get_imagenet_dataset(args)
         num_classes = 1000
@@ -58,7 +60,7 @@ def dataloader_factory(args):
                                   shuffle=True, 
                                   batch_size=args.batch_size, 
                                   num_workers=args.num_workers,
-                                  prefetch_factor=4,
+                                  prefetch_factor=args.prefetch,
                                   pin_memory=args.pin_memory,
                                   drop_last=True)
     if val_dataset is not None:
@@ -66,12 +68,14 @@ def dataloader_factory(args):
                                     shuffle=True, 
                                     batch_size=args.batch_size, 
                                     num_workers=args.num_workers, 
+                                    prefetch_factor=args.prefetch,
                                     pin_memory=args.pin_memory)
         
     test_dataloader = DataLoader(test_dataset,
                                  shuffle=False,
                                  batch_size=args.batch_size,
                                  num_workers=args.num_workers,
+                                 prefetch_factor=args.prefetch,
                                  pin_memory=args.pin_memory)
     
     return [train_dataloader, val_dataloader, test_dataloader, num_classes, input_shape, mixup_fn]
@@ -156,6 +160,32 @@ def get_cifar100_dataset(args):
     
     return train, test
 
+def get_tinyimagenet_dataset(args):
+    if args.snn:
+        train_transform = transforms.Compose([
+            transforms.ToTensor(),
+            transforms.Normalize((0.485, 0.456, 0.406), (0.229, 0.224, 0.225))
+        ])
+    else:
+        train_transform = transforms.Compose([
+            transforms.RandomCrop(64, padding=4),
+            transforms.RandomHorizontalFlip(),
+            transforms.ToTensor(),
+            transforms.Normalize((0.485, 0.456, 0.406), (0.229, 0.224, 0.225))
+        ])
+    test_transform = transforms.Compose([
+        transforms.ToTensor(),
+        transforms.Normalize((0.485, 0.456, 0.406), (0.229, 0.224, 0.225)),
+    ])
+
+    train = torchvision.datasets.ImageFolder(root=os.path.join(args.data_path, 'tiny-imagenet-200/train'),
+                                             transform=train_transform)
+    
+    test = torchvision.datasets.ImageFolder(root=os.path.join(args.data_path, 'tiny-imagenet-200/val'),
+                                            transform=test_transform)
+    
+    return train, test                      
+
 class Imagenet_A_dataset(torchvision.datasets.ImageNet):
     def __init__(self, root, split="train", **kwargs):
         super().__init__(root, split, **kwargs)
@@ -198,6 +228,39 @@ class Imagenet_A_dataset(torchvision.datasets.ImageNet):
 #     test = torchvision.datasets.ImageNet(root=os.path.join(args.data_path, 'imagenet'), split='val', transform=test_transform)
 
 #     return train, test
+def get_imagenet_dataset(args):
+    if args.snn:
+        train_transform = A.Compose([
+            A.RandomResizedCrop(224, 224),
+            A.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225]),
+            A.pytorch.ToTensorV2()
+        ])
+    else:
+        train_transform = A.Compose([
+            A.RandomResizedCrop(224, 224),
+            A.HorizontalFlip(),
+            A.ShiftScaleRotate(),
+            A.HueSaturationValue(),
+            A.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225]),
+            A.pytorch.ToTensorV2()
+        ])
+    test_transform = transforms.Compose([
+        transforms.Resize(256, interpolation=transforms.InterpolationMode.BICUBIC),
+        transforms.CenterCrop(224),
+        transforms.ToTensor(),
+        transforms.Normalize((0.485, 0.456, 0.406), (0.229, 0.224, 0.225)),
+    ])
+    
+    train = Imagenet_A_dataset(root=os.path.join(args.data_path, 'imagenet'),
+                               split='train',
+                               transform=train_transform)
+    
+    test = torchvision.datasets.ImageNet(root=os.path.join(args.data_path, 'imagenet'),
+                                         split='val',
+                                         transform=test_transform)
+    
+    return train, test
+
 # def get_imagenet_dataset(args):
 #     if args.snn:
 #         train_transform = transforms.Compose([
@@ -205,63 +268,40 @@ class Imagenet_A_dataset(torchvision.datasets.ImageNet):
 #             transforms.Normalize((0.485, 0.456, 0.406), (0.229, 0.224, 0.225))
 #         ])
 #     else:
-#         train_transform = A.Compose([
-#             A.RandomResizedCrop(224, 224),
-#             A.HorizontalFlip(),
-#             A.ShiftScaleRotate(),
-#             A.HueSaturationValue(),
-#             A.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225]),
-#             A.pytorch.ToTensorV2()
-#         ])
-#     test_transform = transforms.Compose([
+#         train_transform = create_transform(
+#             input_size=224,
+#             is_training=True,
+#             color_jitter=0.4,
+#             auto_augment="rand-m9-mstd0.5-inc1",
+#             re_prob=0.25,
+#             re_mode="pixel",
+#             re_count=1,
+#             interpolation="bicubic"
+#         )
+#     val_transform = transforms.Compose([
 #         transforms.Resize(256, interpolation=transforms.InterpolationMode.BICUBIC),
 #         transforms.CenterCrop(224),
 #         transforms.ToTensor(),
 #         transforms.Normalize((0.485, 0.456, 0.406), (0.229, 0.224, 0.225)),
 #     ])
+
+#     # train = CachedImageFolder(os.path.join(args.data_path, 'imagenet'),
+#     #                           "train_map.txt", "train.zip@/", 
+#     #                           train_transform)
+#     # test = CachedImageFolder(os.path.join(args.data_path, 'imagenet'),
+#     #                          "validation_map.txt", "val.zip@/",
+#     #                          val_transform)
     
-#     train = Imagenet_A_dataset(root=os.path.join(args.data_path, 'imagenet'),
-#                                split='train',
-#                                transform=train_transform)
-    
-#     test = torchvision.datasets.ImageNet(root=os.path.join(args.data_path, 'imagenet'),
-#                                          split='val',
-#                                          transform=test_transform)
-    
+#     train = create_dataset(
+#         "imagenet",
+#         root=os.path.join(args.data_path, 'imagenet'), split="train", is_training=True,
+#         batch_size=args.batch_size, repeats=1, transform=train_transform)
+#     test = create_dataset(
+#         "imagenet",
+#         root=os.path.join(args.data_path, 'imagenet'), split="val", is_training=False,
+#         batch_size=args.batch_size, repeats=1, transform=val_transform)
+
 #     return train, test
-
-def get_imagenet_dataset(args):
-    if args.snn:
-        train_transform = transforms.Compose([
-            transforms.ToTensor(),
-            transforms.Normalize((0.485, 0.456, 0.406), (0.229, 0.224, 0.225))
-        ])
-    else:
-        train_transform = create_transform(
-            input_size=224,
-            is_training=True,
-            color_jitter=0.4,
-            auto_augment="rand-m9-mstd0.5-inc1",
-            re_prob=0.25,
-            re_mode="pixel",
-            re_count=1,
-            interpolation="bicubic"
-        )
-    val_transform = transforms.Compose([
-        transforms.Resize(256, interpolation=transforms.InterpolationMode.BICUBIC),
-        transforms.CenterCrop(224),
-        transforms.ToTensor(),
-        transforms.Normalize((0.485, 0.456, 0.406), (0.229, 0.224, 0.225)),
-    ])
-
-    train = CachedImageFolder(os.path.join(args.data_path, 'imagenet'),
-                              "train_map.txt", "train.zip@/", 
-                              train_transform, cache_mode="part")
-    test = CachedImageFolder(os.path.join(args.data_path, 'imagenet'),
-                             "val_map.txt", "val.zip@/",
-                             val_transform, cache_mode="part")
-    
-    return train, test
                               
 
 if __name__ == "__main__":

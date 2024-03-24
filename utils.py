@@ -3,6 +3,8 @@ import csv
 import os
 import shutil
 import datetime
+from collections import OrderedDict
+
 import torch
 from PIL import Image
 import numpy as np
@@ -46,6 +48,15 @@ def get_time(start_time, now_time):
     elapsed_second = int(elapsed_time % 3600 % 60)
 
     return str(elapsed_hour).zfill(2) + ":" + str(elapsed_minute).zfill(2) + ":" + str(elapsed_second).zfill(2)
+
+def fix_model_state_dict(state_dict):
+    new_state_dict = OrderedDict()
+    for k, v in state_dict.items():
+        name = k
+        if name.startswith('module.'):
+            name = name[7:]  # remove 'module.' of dataparallel
+        new_state_dict[name] = v
+    return new_state_dict
 
 def plot_activations(activations, dir, neuron_type, prefix=None, time=None):
     for k, v in activations.items():

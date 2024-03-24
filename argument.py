@@ -13,7 +13,8 @@ def get_args():
     g_dataset.add_argument('dataset')
     g_dataset.add_argument('--data_path', default="/home/work/thabara/Datasets")
     g_dataset.add_argument('--batch_size', default=128, type=int)
-    g_dataset.add_argument('--num_workers', default=16, type=int)
+    g_dataset.add_argument('--num_workers', default=2, type=int)
+    g_dataset.add_argument('--prefetch', default=8, type=int)
     g_dataset.add_argument('--pin_memory', default=1, type=int)  # boolean
     g_dataset.add_argument('--split', default=0.8, type=float)
     g_dataset.add_argument('--mixup', default=0, type=float)  # 0.8
@@ -29,6 +30,8 @@ def get_args():
     g_model.add_argument('--dropout', default=0.0, type=float)
     g_model.add_argument('--batch_norm', default=1, type=int)  # boolean
     g_model.add_argument('--label_smoothing', default=0, type=float)
+    g_model.add_argument('--pretrained', type=str, default="")
+    g_model.add_argument('--qcfs', default=0, type=int)  # floor 
 
     ########################################
     # ANN Train Setting

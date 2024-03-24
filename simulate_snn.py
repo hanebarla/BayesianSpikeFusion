@@ -12,6 +12,7 @@ from dataset import dataloader_factory
 from model_ann import model_factory
 from model_snn import create_model_snn
 from ann2snn import convert
+from utils import fix_model_state_dict
 
 def main():
     snn_args = get_snn_args()
@@ -21,8 +22,10 @@ def main():
 
     conditions, _ = get_save_snn_dir(args)
 
-    if not os.path.exists(os.path.join(snn_args.train_dir, "snn")):
-        os.makedirs(os.path.join(snn_args.train_dir, "snn"))
+    subdir = "snn{}".format("_{}".format(snn_args.init_mem) if snn_args.init_mem != 0.0 else "")
+    save_dir = os.path.join(snn_args.train_dir, subdir)
+    if not os.path.exists(save_dir):
+        os.makedirs(save_dir)
 
     # create logger
     logger = create_logger(snn_args.train_dir, conditions, 'simulate.txt'.format(snn_args.hps))
@@ -44,26 +47,32 @@ def main():
     logger.info("[model]: {}".format(str(ann_model)))
     checkpoint = torch.load(os.path.join(snn_args.train_dir, "checkpoint.pth"))
     logger.info("ANN Accuracy: {}".format(checkpoint["acc"]))
-    ann_model.load_state_dict(checkpoint["state_dict"])
+    state_dict = checkpoint["state_dict"]
+    if "module" == list(state_dict.keys())[0][:6]:
+        state_dict = fix_model_state_dict(state_dict)
+    ann_model.load_state_dict(state_dict)
 
     # ann to snn
     snn_path = os.path.join(snn_args.train_dir, "snn.pth")
     if os.path.exists(snn_path):
         snn_state_dict = torch.load(snn_path)
-        snn = create_model_snn(model=ann_model, batch_size=snn_args.batch_size, input_shape=in_shapes)
+        snn = create_model_snn(model=ann_model, batch_size=snn_args.batch_size, input_shape=in_shapes, init_mem=snn_args.init_mem)
         snn.load_state_dict(snn_state_dict["state_dict"])
         logger.info("SNN model already exists")
     else:
+        ann_model.to(device)
         snn = convert(args, snn_args, ann_model, train_dataloader, in_shapes, device, logger)
         logger.info("[SNN]: {}".format(str(snn)))
     snn.to(device)
     snn.eval()
 
     # simulate
-    simulate(snn, train_dataloader, snn_args.timestep, num_classes, snn_args.train_dir, device)
-    
-def simulate(snn, train_dataloader, sim_time, num_classes, save_dir, device):
-    for i, data in enumerate(train_dataloader):
+    simulate(snn, test_dataloader, snn_args.timestep, num_classes, save_dir, device, logger)
+
+@torch.no_grad()
+def simulate(snn, test_dataloader, sim_time, num_classes, save_dir, device, logger):
+    for i, data in enumerate(test_dataloader):
+        logger.info("Progress: {}/{}".format(i+1, len(test_dataloader)))
         images, labels = data
         images = images.to(device)
         labels = labels.to(device)
@@ -82,7 +91,7 @@ def simulate(snn, train_dataloader, sim_time, num_classes, save_dir, device):
             else:
                 save_dict["mid"] = out.cpu().detach().numpy().copy()
             # np.savez_compressed(os.path.join(save_dir, "original", "{}_output_{}.npz".format(index, i)), o=out.cpu().detach().numpy().copy())
-        np.savez_compressed(os.path.join(save_dir, "snn", "output_{}.npz".format(i)), **save_dict)
+        np.savez_compressed(os.path.join(save_dir, "output_{}.npz".format(i)), **save_dict)
 
 @torch.no_grad()
 def simulate_iter(snn, images, sim_time, num_classes, device):

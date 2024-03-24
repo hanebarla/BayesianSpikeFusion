@@ -10,8 +10,8 @@ MAC_ENE = 3.7 + 0.9
 AC_ENE = 0.9
 
 
-def create_model_snn(model, batch_size, input_shape):
-    spiking_model = SpikingSDN(model, batch_size, input_shape)
+def create_model_snn(model, batch_size, input_shape, init_mem=0.0):
+    spiking_model = SpikingSDN(model, batch_size, input_shape, init_mem)
     return spiking_model
 
 

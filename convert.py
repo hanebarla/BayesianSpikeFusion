@@ -32,13 +32,18 @@ def merge_and_normalize_conv(conv, bn, scale_factor, prev_factor):
     b = conv.bias
     if b is None:
         b = torch.zeros(conv.out_channels, device=w.device, dtype=w.dtype)
-    mean = bn.running_mean
-    var_sqrt = torch.sqrt(bn.running_var + bn.eps)
-    beta = bn.weight
-    gamma = bn.bias
 
-    w = w * (beta / var_sqrt).reshape([conv.out_channels, 1, 1, 1]) * prev_factor / scale_factor
-    b = ((b - mean)/var_sqrt * beta + gamma) / scale_factor
+    if bn is None:
+        w = w * prev_factor / scale_factor
+        b = b / scale_factor
+    else:
+        mean = bn.running_mean
+        var_sqrt = torch.sqrt(bn.running_var + bn.eps)
+        beta = bn.weight
+        gamma = bn.bias
+
+        w = w * (beta / var_sqrt).reshape([conv.out_channels, 1, 1, 1]) * prev_factor / scale_factor
+        b = ((b - mean)/var_sqrt * beta + gamma) / scale_factor
 
     new_conv = nn.Conv2d(conv.in_channels,
                          conv.out_channels,
@@ -92,7 +97,7 @@ def normalize(ann, data, percentile=99.9, initial_scale_factor=1.0):
                 module.bn1 = None
                 module.conv2 = merge_and_normalize_conv(module.conv2, module.bn2, scale_factor2, scale_factor1)
                 module.bn2 = None
-                module.conv_skip = merge_and_normalize_conv(module.conv_skip, nn.BatchNorm2d(module.conv_skip.out_channels), scale_factor2, prev_factor)
+                module.conv_skip = merge_and_normalize_conv(module.conv_skip, None, scale_factor2, prev_factor)
                 prev_factor = scale_factor2
                 # print(scale_factor2, scale_factor1)
                 scale_factors.append(scale_factor2)

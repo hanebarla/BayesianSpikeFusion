@@ -7,6 +7,9 @@ First, set up the environment to execute the program. The scripts in this reposi
 pip install -r requirements.txt
 ```
 
+加えて，TinyImagenetを使用する場合は手動でセットアップする必要があります．
+こちらからTinyImagenetのダウンロードとディレクトリ整理を行ってください．
+
 ## 2. Training
 To train an Artificial Neural Network (ANN), you will use the ```train_ann.py``` script. The dataset name and model name are mandatory arguments, and you can specify the location to insert the intermediate output layer using the ```--ic_index``` argument. You can also specify the directory to save the dataset with the ```--data_path``` argument, and the directory to save the experimental results with the ```--root``` argument.
 
