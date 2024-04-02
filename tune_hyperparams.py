@@ -28,7 +28,7 @@ def main():
     conditions, _ = get_save_snn_dir(args)
 
     # create logger
-    logger = create_logger(snn_args.train_dir, conditions, 'tune_{}_log.txt'.format(snn_args.hps))
+    logger = create_logger(snn_args.train_dir, conditions, 'tune_log.txt')
     logger.info("[ANN Args]: {}".format(str(args.__dict__)))
     logger.info("[SNN Args]: {}".format(str(snn_args.__dict__)))
 
@@ -72,16 +72,19 @@ def main():
         train_sim_dir = os.path.join(snn_args.train_dir, "train_init_mem_{}".format(snn_args.init_mem))
     if not os.path.exists(train_sim_dir):
         os.makedirs(train_sim_dir)
-    # simulate(snn, train_dataloader, snn_args.timestep, num_classes, train_sim_dir, device)
+    simulate(snn, train_dataloader, snn_args.timestep, num_classes, train_sim_dir, device)
 
     # hyperparameter search
     logger.info("Hyperparameter search (Grid)")
-    # hyperparameter_search(args, snn_args, num_classes, "grid", train_sim_dir, logger)
+    hyperparameter_search(args, snn_args, num_classes, "grid", train_sim_dir, logger)
     logger.info("Hyperparameter search (Empirical)")
     hyperparameter_search(args, snn_args, num_classes, "emp", train_sim_dir, logger)
 
     # linear approximation
-    approximate(snn_args)
+    logger.info("Approximate Grid")
+    approximate(snn_args, "grid")
+    logger.info("Approximate Empirical")
+    approximate(snn_args, "emp")
     logger.info("Done")
 
 def simulate(snn, train_dataloader, sim_time, num_classes, save_dir, device):
@@ -211,13 +214,13 @@ def hyperparameter_search(args, snn_args, num_classes, hps, saved_dir, logger):
     # fig.savefig(os.path.join(snn_args.train_dir, "time_alpha_{}.svg".format(hps)))
 
 
-def approximate(snn_args):
+def approximate(snn_args, hps):
     xs = np.arange(snn_args.timestep)
     xs_unit = xs / snn_args.timestep
     if snn_args.init_mem == 0.0:
-        ys = np.load(os.path.join(snn_args.train_dir, "alpha_output_{}.npz".format(snn_args.hps)))["alpha"]
+        ys = np.load(os.path.join(snn_args.train_dir, "alpha_output_{}.npz".format(hps)))["alpha"]
     else:
-        ys = np.load(os.path.join(snn_args.train_dir, "alpha_output_{}_init_mem_{}.npz".format(snn_args.hps, snn_args.init_mem)))["alpha"]
+        ys = np.load(os.path.join(snn_args.train_dir, "alpha_output_{}_init_mem_{}.npz".format(hps, snn_args.init_mem)))["alpha"]
     # ys = np.load(os.path.join(snn_args.train_dir, "alpha_output_{}.npz".format(snn_args.hps)))["alpha"]
 
     fig = plt.figure(figsize=(4.8, 3.75))
@@ -231,9 +234,9 @@ def approximate(snn_args):
     interpolate_f = interpolate.interp1d(interpolate_index, ys[interpolate_index], kind='linear')
     interpolated = interpolate_f(xs)
     if snn_args.init_mem == 0.0:
-        np.savez(os.path.join(snn_args.train_dir, "division_linear_alpha_{}.npz".format(snn_args.hps)), y=interpolated)
+        np.savez(os.path.join(snn_args.train_dir, "division_linear_alpha_{}.npz".format(hps)), y=interpolated)
     else:
-        np.savez(os.path.join(snn_args.train_dir, "division_linear_alpha_{}_init_mem_{}.npz".format(snn_args.hps, snn_args.init_mem)), y=interpolated)
+        np.savez(os.path.join(snn_args.train_dir, "division_linear_alpha_{}_init_mem_{}.npz".format(hps, snn_args.init_mem)), y=interpolated)
     # np.savez(os.path.join(snn_args.train_dir, "division_linear_alpha_{}.npz".format(snn_args.hps)), y=interpolated)
 
     ax1.plot(xs, interpolated, c="b", label="approximation curve")
@@ -242,9 +245,9 @@ def approximate(snn_args):
     ax1.legend()
     fig.tight_layout()
     if snn_args.init_mem == 0.0:
-        fig.savefig(os.path.join(snn_args.train_dir, "time_alpha_with_curve_{}.svg".format(snn_args.hps)))
+        fig.savefig(os.path.join(snn_args.train_dir, "time_alpha_with_curve_{}.svg".format(hps)))
     else:
-        fig.savefig(os.path.join(snn_args.train_dir, "time_alpha_with_curve_{}_init_mem_{}.svg".format(snn_args.hps, snn_args.init_mem)))
+        fig.savefig(os.path.join(snn_args.train_dir, "time_alpha_with_curve_{}_init_mem_{}.svg".format(hps, snn_args.init_mem)))
     # fig.savefig(os.path.join(snn_args.train_dir, "time_alpha_with_curve_{}.svg".format(snn_args.hps)))
 
 if __name__ == "__main__":

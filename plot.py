@@ -107,6 +107,8 @@ def plot_differ_mp(args):
     ax.set_xlabel("timestep")
     ax.set_ylabel("accuracy")
 
+    if not os.path.exists("Plot"):
+        os.makedirs("Plot")
     fig.savefig(os.path.join("Plot", "ene_acc.svg"))
 
 def calc_auc(energies, accs, target_ene):

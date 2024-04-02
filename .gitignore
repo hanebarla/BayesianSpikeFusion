@@ -1,2 +1,4 @@
 __pycache__
 Plot/
+train_ann_multigpu.py
+tmp_imagenet.py
