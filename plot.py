@@ -128,7 +128,6 @@ def get_ene_acc(files, grid_alphas, emp_alphas, fp_energy_per_time, bsf_energy_p
     final_acc = np.zeros(grid_alphas.shape[0])
     mid_acc = np.zeros(emp_alphas.shape[0])
     timesteps = np.arange(1, grid_alphas.shape[0]+1)
-    # energies = timesteps * energy_per_time
     fp_energies = timesteps * fp_energy_per_time
     bsf_energies = timesteps * bsf_energy_per_time
 
