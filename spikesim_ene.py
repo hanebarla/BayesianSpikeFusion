@@ -93,11 +93,11 @@ def spikesim_energy(model, data_shape, timestep):
                 
                 parallel_size = 4
                 in_ch_list.append(np.ceil(in_ch/parallel_size))
-                in_dim_list.append((1, 1))
+                in_dim_list.append((parallel_size, 1))
 
                 out_ch_list.append(out_ch)
                 out_dim_list.append((1,1))
-                kernel_list.append((parallel_size,parallel_size))
+                kernel_list.append((parallel_size,1))
 
                 print("FC", out_ch, (1,1))
 
