@@ -43,7 +43,13 @@ def plot_differ_mp(args):
         num_classes = 200
     model = model_factory(ann_args, num_classes, data_shape)
     snn = SpikingSDN(model, 128, data_shape)
-    energy_per_time, _ = spikesim_energy(snn, data_shape, 1)
+    energy_per_time, layer_energy_per_time = spikesim_energy(snn, data_shape, 1)
+    BSF_energy_per_time = energy_per_time
+    FP_energy_per_time = sum(layer_energy_per_time[:-2]+[layer_energy_per_time[-1]])
+    # pj to J
+    BSF_energy_per_time *= 1e-12
+    FP_energy_per_time *= 1e-12
+    print("BSF_energy: {:.4e}, FP_energy: {:.4e}".format(BSF_energy_per_time, FP_energy_per_time))
 
     grid_alphas = np.load(os.path.join(root_dir, "division_linear_alpha_grid.npz"))["y"]  # timestep,
     emp_alphas = np.load(os.path.join(root_dir, "division_linear_alpha_emp.npz"))["y"]  # timestep,
@@ -62,40 +68,36 @@ def plot_differ_mp(args):
             data = np.load(ene_acc_file)
             grid_acc = data["grid_acc"]
             emp_acc = data["emp_acc"]
-            energies = data["energies"]
+            fp_energies = data["fp_energies"]
+            bsf_energies = data["bsf_energies"]
             final_acc = data["final_acc"]
-            mid_acc = data["mid_acc"]
         else:
             files = os.listdir(exp)
             files = [os.path.join(exp, file) for file in files if file.endswith(".npz")]
             files = [file for file in files if "ene_acc" not in file]
-            grid_acc, emp_acc, final_acc, mid_acc, energies = get_ene_acc(files, grid_alphas, emp_alphas, energy_per_time)
-            np.savez_compressed(os.path.join(exp, "ene_acc.npz"), grid_acc=grid_acc, emp_acc=emp_acc, final_acc=final_acc, mid_acc=mid_acc, energies=energies)
+            grid_acc, emp_acc, final_acc, mid_acc, fp_energies, bsf_energies = get_ene_acc(files, grid_alphas, emp_alphas, FP_energy_per_time, BSF_energy_per_time)
+            np.savez_compressed(os.path.join(exp, "ene_acc.npz"), grid_acc=grid_acc, emp_acc=emp_acc, final_acc=final_acc, mid_acc=mid_acc, fp_energies=fp_energies, bsf_energies=bsf_energies)
 
-        ax.plot(energies, grid_acc, label="grid")
-        ax.plot(energies, emp_acc, label="emp")
-        ax.plot(energies, final_acc, label="final")
-        ax.plot(energies, mid_acc, label="mid")
-
-    # pJ to J
-    energies = energies * 1e-12
+        ax.plot(bsf_energies, grid_acc, label="grid")
+        ax.plot(bsf_energies, emp_acc, label="emp")
+        ax.plot(fp_energies, final_acc, label="final")
 
     percentage = 0.99
     target_acc = fp_acc*percentage
 
     fp_exceed_indexes = final_acc >= target_acc
-    fp_exceed_energies = energies[fp_exceed_indexes][0]
+    fp_exceed_energies = fp_energies[fp_exceed_indexes][0]
     # print(fp_exceed_energies)
     bsf_exceed_indexes_gird = grid_acc >= target_acc
-    bsf_exceed_energies_gird = energies[bsf_exceed_indexes_gird][0]
+    bsf_exceed_energies_gird = bsf_energies[bsf_exceed_indexes_gird][0]
     # print(bsf_exceed_energies_gird)
     bsf_exceed_indexes_emp = emp_acc >= target_acc
-    bsf_exceed_energies_emp = energies[bsf_exceed_indexes_emp][0]
+    bsf_exceed_energies_emp = bsf_energies[bsf_exceed_indexes_emp][0]
     # print(bsf_exceed_energies_emp)
 
-    fp_acc_target, fp_auc = calc_auc(energies, final_acc, fp_exceed_energies)
-    bsf_acc_grid, bsf_auc_grid = calc_auc(energies, grid_acc, fp_exceed_energies)
-    bsf_acc_emp, bsf_auc_emp = calc_auc(energies, emp_acc, fp_exceed_energies)
+    fp_acc_target, fp_auc = calc_auc(fp_energies, final_acc, fp_exceed_energies)
+    bsf_acc_grid, bsf_auc_grid = calc_auc(bsf_energies, grid_acc, fp_exceed_energies)
+    bsf_acc_emp, bsf_auc_emp = calc_auc(bsf_energies, emp_acc, fp_exceed_energies)
     print("fp_acc_target: {:.4f}, fp_auc: {:.4e}, fp_ene: {:.4e}".format(fp_acc_target, fp_auc, fp_exceed_energies))
     print("bsf_acc_grid: {:.4f}, bsf_auc_grid: {:.4e}, bsf_ene_grid: {:.4e}".format(bsf_acc_grid, bsf_auc_grid, bsf_exceed_energies_gird))
     print("bsf_acc_emp: {:.4f}, bsf_auc_emp: {:.4e}, bsf_ene_emp: {:.4e}".format(bsf_acc_emp, bsf_auc_emp, bsf_exceed_energies_emp))
@@ -119,14 +121,16 @@ def calc_auc(energies, accs, target_ene):
 
     return y[-1], auc
 
-def get_ene_acc(files, grid_alphas, emp_alphas, energy_per_time):
+def get_ene_acc(files, grid_alphas, emp_alphas, fp_energy_per_time, bsf_energy_per_time):
     tot = 0
     grid_acc = np.zeros(grid_alphas.shape[0])
     emp_acc = np.zeros(emp_alphas.shape[0])
     final_acc = np.zeros(grid_alphas.shape[0])
     mid_acc = np.zeros(emp_alphas.shape[0])
     timesteps = np.arange(1, grid_alphas.shape[0]+1)
-    energies = timesteps * energy_per_time
+    # energies = timesteps * energy_per_time
+    fp_energies = timesteps * fp_energy_per_time
+    bsf_energies = timesteps * bsf_energy_per_time
 
     for i, file in enumerate(files):
         data = np.load(file)
@@ -159,7 +163,7 @@ def get_ene_acc(files, grid_alphas, emp_alphas, energy_per_time):
     final_acc /= tot
     mid_acc /= tot
 
-    return grid_acc, emp_acc, final_acc, mid_acc, energies
+    return grid_acc, emp_acc, final_acc, mid_acc, fp_energies, bsf_energies
         
 def calc_fr_std(alphas, final, mid):
     N = np.arange(1, final.shape[0]+1)[:,np.newaxis,np.newaxis]

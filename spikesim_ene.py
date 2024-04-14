@@ -88,31 +88,18 @@ def spikesim_energy(model, data_shape, timestep):
 
     for _, modules in model.classifiers.items():
         for module in modules:
-            if isinstance(module, torch.nn.AdaptiveAvgPool2d):
-                in_ch_list.append(ch)
-                in_dim_list.append(dim)
-                kernel_list.append(dim)
-
-                dim = ((1, 1))
-
-                out_ch_list.append(ch)
-                out_dim_list.append(dim)
-                # print(module, ch, dim)
-                print("Grobal Average Pooling", ch, dim)
-            elif isinstance(module, SpikingDense):
-                in_ch_list.append(ch)
-                in_dim_list.append(dim)
-
+            if isinstance(module, SpikingDense):
                 out_ch, in_ch = module.weight.size()
-                ch = out_ch
-                dim = (1, 1)
+                
+                parallel_size = 4
+                in_ch_list.append(np.ceil(in_ch/parallel_size))
+                in_dim_list.append((1, 1))
 
-                out_ch_list.append(ch)
-                out_dim_list.append(dim)
-                kernel_list.append(dim)
+                out_ch_list.append(out_ch)
+                out_dim_list.append((1,1))
+                kernel_list.append((parallel_size,parallel_size))
 
-                # print(module, ch, dim)
-                print("FC", ch, dim)
+                print("FC", out_ch, (1,1))
 
     print("in ch list: ", in_ch_list)
     print("in dim list: ", in_dim_list)
