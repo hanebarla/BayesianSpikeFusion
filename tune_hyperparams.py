@@ -43,17 +43,19 @@ def main():
     logger.info("Mixup: {}".format(False))
 
     # get ANN model
+    args.batch_norm = False
     ann_model = model_factory(args, num_classes, in_shapes)
     logger.info("[model]: {}".format(str(ann_model)))
-    checkpoint = torch.load(os.path.join(snn_args.train_dir, "checkpoint.pth"))
-    logger.info("ANN Accuracy: {}".format(checkpoint["acc"]))
-    if list(checkpoint["state_dict"].keys())[0].startswith("module."):
-        ann_model.load_state_dict(fix_model_state_dict(checkpoint["state_dict"]))
-    else:
-        ann_model.load_state_dict(checkpoint["state_dict"])
+    # checkpoint = torch.load(os.path.join(snn_args.train_dir, "checkpoint.pth"))
+    # logger.info("ANN Accuracy: {}".format(checkpoint["acc"]))
+    # if list(checkpoint["state_dict"].keys())[0].startswith("module."):
+    #     ann_model.load_state_dict(fix_model_state_dict(checkpoint["state_dict"]))
+    # else:
+    #     ann_model.load_state_dict(checkpoint["state_dict"])
 
     # ann to snn
-    snn_path = os.path.join(snn_args.train_dir, "snn.pth")
+    snn_path = os.path.join(snn_args.train_dir, "snn_{}.pth".format(snn_args.percentile))
+    # print(os.path.exists(snn_path))
     if os.path.exists(snn_path):
         snn_state_dict = torch.load(snn_path)
         snn = create_model_snn(model=ann_model, batch_size=snn_args.batch_size, input_shape=in_shapes)
@@ -66,13 +68,22 @@ def main():
     snn.eval()
 
     # simulate
-    if snn_args.init_mem == 0.0:
+    if "dvs" in args.dataset:
+        post_fix = ""
+        if snn_args.dvs_parallel:
+            post_fix = "_parallel"
+        elif snn_args.sequential:
+            post_fix = "_sequential"
+        else:
+            post_fix = "_nonsequential"
+        train_sim_dir = os.path.join(snn_args.train_dir, "train" + post_fix)
+    elif snn_args.init_mem == 0.0:
         train_sim_dir = os.path.join(snn_args.train_dir, "train")
     else:
         train_sim_dir = os.path.join(snn_args.train_dir, "train_init_mem_{}".format(snn_args.init_mem))
     if not os.path.exists(train_sim_dir):
         os.makedirs(train_sim_dir)
-    simulate(snn, train_dataloader, snn_args.timestep, num_classes, train_sim_dir, device)
+    simulate(args, snn_args, snn, train_dataloader, snn_args.timestep, num_classes, train_sim_dir, device)
 
     # hyperparameter search
     logger.info("Hyperparameter search (Grid)")
@@ -82,14 +93,15 @@ def main():
 
     # linear approximation
     logger.info("Approximate Grid")
-    approximate(snn_args, "grid")
+    approximate(args, snn_args, "grid")
     logger.info("Approximate Empirical")
-    approximate(snn_args, "emp")
+    approximate(args, snn_args, "emp")
     logger.info("Done")
 
-def simulate(snn, train_dataloader, sim_time, num_classes, save_dir, device):
+def simulate(args, snn_args, snn, train_dataloader, sim_time, num_classes, save_dir, device):
     tot = 0
     for i, data in enumerate(train_dataloader):
+        print("iter: ", i)
         if tot >= 10000:
             break
 
@@ -98,7 +110,10 @@ def simulate(snn, train_dataloader, sim_time, num_classes, save_dir, device):
         labels = labels.to(device)
         snn.reset()
             
-        _out_spikes = simulate_iter(snn, images, sim_time, num_classes, device)
+        if "dvs" in args.dataset:
+            _out_spikes = simulate_iter_dvs(snn, images, sim_time, num_classes, device, snn_args.sequential, snn_args.dvs_parallel)
+        else:
+            _out_spikes = simulate_iter(snn, images, sim_time, num_classes, device)
 
         np.savez_compressed(os.path.join(save_dir, "labels_{}.npz".format(i)), l=labels.cpu().detach().numpy().copy())
         for index, out in _out_spikes.items():
@@ -109,6 +124,7 @@ def simulate(snn, train_dataloader, sim_time, num_classes, save_dir, device):
 @torch.no_grad()
 def simulate_iter(snn, images, sim_time, num_classes, device):
     batch_size = images.size(0)
+    snn.reset(batch_size=batch_size)
 
     out_spikes = {}
     for index in snn.classifiers.keys():
@@ -121,10 +137,49 @@ def simulate_iter(snn, images, sim_time, num_classes, device):
             out_spikes[int(index)][t,:,:] = out
 
     return out_spikes
+
+@torch.no_grad()
+def simulate_iter_dvs(snn, images, sim_time, num_classes, device, sequential=True, dvs_parallel=False):
+    N, T, C, H, W = images.size()
+    snn.reset(batch_size=N)
+    snn.to(device)
+
+    out_spikes = {}
+    for index in snn.classifiers.keys():
+        out_spikes[int(index)] = torch.zeros(sim_time, N, num_classes, device=device)
+
+    if dvs_parallel:
+        for img_t in trange(T):
+            snn.reset(batch_size=N)
+            snn.to(device)
+            for t in range(sim_time):
+                outputs = snn(images[:,img_t,:,:,:])
+
+                for index, out in outputs.items():
+                    out_spikes[int(index)][t,:,:] += out / T
+
+        return out_spikes
+
+    if sequential:
+        for t in trange(sim_time//T):
+            for img_t in range(T):
+                outputs = snn(images[:,img_t,:,:,:])
+
+                for index, out in outputs.items():
+                    out_spikes[int(index)][t,:,:] = out
+    else:
+        for img_t in trange(T):
+            for t in range(sim_time//T):
+                outputs = snn(images[:,img_t,:,:,:])
+
+                for index, out in outputs.items():
+                    out_spikes[int(index)][t,:,:] = out
+
+    return out_spikes
     
 
 def hyperparameter_search(args, snn_args, num_classes, hps, saved_dir, logger):
-    files_in_train_dir = os.listdir(os.path.join(snn_args.train_dir, "train"))
+    files_in_train_dir = os.listdir(os.path.join(saved_dir))
     labels_file_path = [f for f in files_in_train_dir if "labels_" in f]
     exp_num = len(labels_file_path)
 
@@ -204,7 +259,18 @@ def hyperparameter_search(args, snn_args, num_classes, hps, saved_dir, logger):
     ax1.set_xlabel("Time Step")
     ax1.set_ylabel(r"$\alpha$")
 
-    if snn_args.init_mem == 0.0:
+    if "dvs" in args.dataset:
+        file_name = "alpha_output_{}".format(hps)
+        if snn_args.dvs_parallel:
+            file_name += "_parallel"
+        elif snn_args.sequential:
+            file_name += "_sequential"
+        else:
+            file_name += "_nonsequential"
+        file_name += ".npz"
+        np.savez(os.path.join(snn_args.train_dir, file_name), alpha=ys)
+        fig.savefig(os.path.join(snn_args.train_dir, file_name.replace(".npz", ".svg")))
+    elif snn_args.init_mem == 0.0:
         np.savez(os.path.join(snn_args.train_dir, "alpha_output_{}.npz".format(hps)), alpha=ys)
         fig.savefig(os.path.join(snn_args.train_dir, "time_alpha_{}.svg".format(hps)))
     else:
@@ -214,10 +280,20 @@ def hyperparameter_search(args, snn_args, num_classes, hps, saved_dir, logger):
     # fig.savefig(os.path.join(snn_args.train_dir, "time_alpha_{}.svg".format(hps)))
 
 
-def approximate(snn_args, hps):
+def approximate(args, snn_args, hps):
     xs = np.arange(snn_args.timestep)
     xs_unit = xs / snn_args.timestep
-    if snn_args.init_mem == 0.0:
+    if "dvs" in args.dataset:
+        file_name = "alpha_output_{}".format(hps)
+        if snn_args.dvs_parallel:
+            file_name += "_parallel"
+        elif snn_args.sequential:
+            file_name += "_sequential"
+        else:
+            file_name += "_nonsequential"
+        file_name += ".npz"
+        ys = np.load(os.path.join(snn_args.train_dir, file_name))["alpha"]
+    elif snn_args.init_mem == 0.0:
         ys = np.load(os.path.join(snn_args.train_dir, "alpha_output_{}.npz".format(hps)))["alpha"]
     else:
         ys = np.load(os.path.join(snn_args.train_dir, "alpha_output_{}_init_mem_{}.npz".format(hps, snn_args.init_mem)))["alpha"]
@@ -233,7 +309,18 @@ def approximate(snn_args, hps):
             
     interpolate_f = interpolate.interp1d(interpolate_index, ys[interpolate_index], kind='linear')
     interpolated = interpolate_f(xs)
-    if snn_args.init_mem == 0.0:
+
+    if "dvs" in args.dataset:
+        file_name = "division_linear_alpha_{}".format(hps)
+        if snn_args.dvs_parallel:
+            file_name += "_parallel"
+        elif snn_args.sequential:
+            file_name += "_sequential"
+        else:
+            file_name += "_nonsequential"
+        file_name += ".npz"
+        np.savez(os.path.join(snn_args.train_dir, file_name), y=interpolated)
+    elif snn_args.init_mem == 0.0:
         np.savez(os.path.join(snn_args.train_dir, "division_linear_alpha_{}.npz".format(hps)), y=interpolated)
     else:
         np.savez(os.path.join(snn_args.train_dir, "division_linear_alpha_{}_init_mem_{}.npz".format(hps, snn_args.init_mem)), y=interpolated)
@@ -244,6 +331,16 @@ def approximate(snn_args, hps):
     ax1.set_ylabel(r"$\alpha$")
     ax1.legend()
     fig.tight_layout()
+    if "dvs" in args.dataset:
+        file_name = "time_alpha_with_curve_{}".format(hps)
+        if snn_args.dvs_parallel:
+            file_name += "_parallel"
+        elif snn_args.sequential:
+            file_name += "_sequential"
+        else:
+            file_name += "_nonsequential"
+        file_name += ".svg"
+        fig.savefig(os.path.join(snn_args.train_dir, file_name))
     if snn_args.init_mem == 0.0:
         fig.savefig(os.path.join(snn_args.train_dir, "time_alpha_with_curve_{}.svg".format(hps)))
     else:

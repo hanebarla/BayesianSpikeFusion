@@ -1,7 +1,7 @@
 import os, argparse
 import torch
 
-from train_ann import eval
+from train_ann import eval, eval_dvs
 from convert import normalize
 from dataset import dataloader_factory
 from model_ann import model_factory
@@ -57,27 +57,36 @@ def convert(args, snn_args, model, dataloader, in_shapes, device, logger):
     snn_path = os.path.join(snn_args.train_dir, "snn_{}.pth".format(snn_args.percentile))
     logger.info("SNN Path: {}".format(snn_path))
     
-    if os.path.exists(snn_path):
-        if has_bias_in_model(model):
-            add_bias_in_conv(model)
-        logger.info("SNN model already exists")
-        snn_state_dict = torch.load(snn_path)
-        snn = SpikingSDN(model, snn_args.batch_size, in_shapes)
-        snn.load_state_dict(snn_state_dict["state_dict"])
-        return snn
+    # if os.path.exists(snn_path):
+    #     if has_bias_in_model(model):
+    #         add_bias_in_conv(model)
+    #     logger.info("SNN model already exists")
+    #     snn_state_dict = torch.load(snn_path)
+    #     snn = SpikingSDN(model, snn_args.batch_size, in_shapes)
+    #     snn.load_state_dict(snn_state_dict["state_dict"])
+    #     return snn
 
     loss_weight = {
         -1: 1.0,
         args.ic_index: 1.0
     }
-    _, before_acc = eval(args, dataloader, model, loss_weight, device)
+    if "dvs" in args.dataset:
+        _, before_acc = eval_dvs(args, dataloader, model, loss_weight, device)
+    else:
+        _, before_acc = eval(args, dataloader, model, loss_weight, device)
     logger.info("before conversion, test acc.: {}".format(before_acc))
 
-    result = normalize(model.feature, next(iter(dataloader))[0].to(device))
+    images = next(iter(dataloader))[0].to(device)
+    if "dvs" in args.dataset:
+        images = images.view(-1, 2, 48, 48)
+    result = normalize(model.feature, images)
     for index in model.classifiers.keys():
         normalize(model.classifiers[index], result[1][int(index)], initial_scale_factor=result[0][int(index)])
 
-    _, after_acc = eval(args, dataloader, model, loss_weight, device)
+    if "dvs" in args.dataset:
+        _, after_acc = eval_dvs(args, dataloader, model, loss_weight, device)
+    else:
+        _, after_acc = eval(args, dataloader, model, loss_weight, device)
     logger.info("after conversion, test acc.: {}".format(after_acc))
   
     snn = SpikingSDN(model, snn_args.batch_size, in_shapes)

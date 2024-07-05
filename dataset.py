@@ -1,6 +1,7 @@
 import os
 import time
 
+import cv2
 import torchvision
 import torchvision.transforms as transforms
 from torchvision.datasets import ImageFolder
@@ -10,6 +11,7 @@ from timm.data import create_transform, create_dataset, create_loader, resolve_d
 import albumentations as A
 from albumentations.pytorch import ToTensorV2
 import numpy as np
+from spikingjelly.datasets import dvs128_gesture
 
 
 def dataloader_factory(args):
@@ -33,6 +35,10 @@ def dataloader_factory(args):
         train_dataset, test_dataset = get_imagenet_dataset(args)
         num_classes = 1000
         input_shape = (3, 224, 224)
+    elif args.dataset == "dvsgesture":
+        train_dataset, test_dataset = get_dvsgesture_dataset(args)
+        num_classes = 11
+        input_shape = (2, 48, 48)
     else:
         raise NotImplementedError(args.dataset)
     
@@ -79,6 +85,27 @@ def dataloader_factory(args):
                                  pin_memory=args.pin_memory)
     
     return [train_dataloader, val_dataloader, test_dataloader, num_classes, input_shape, mixup_fn]
+
+class ReszieNP:
+    def __init__(self, size: tuple):
+        self.size = size
+
+    def __call__(self, x: np.ndarray):
+        T, C, H, W = x.shape
+        # print(x.shape, self.size)
+        x = np.reshape(x, (T*C, H, W))
+        x = np.transpose(x, (1, 2, 0))
+        # print(x.shape)
+        x = cv2.resize(x, dsize=self.size)
+        x = np.transpose(x, (2, 0, 1))
+        # print(x.shape)
+        x = np.reshape(x, (T, C, self.size[0], self.size[1]))
+        # print(x.shape)
+        return x
+
+class FromNP:
+    def __call__(self, x: np.ndarray):
+        return torch.from_numpy(x)
 
 def get_mnist_dataset(args):
     transform = transforms.Compose([
@@ -259,6 +286,27 @@ def get_imagenet_dataset(args):
                                          split='val',
                                          transform=test_transform)
     
+    return train, test
+
+def get_dvsgesture_dataset(args):
+    if args.snn:
+        train_transform = transforms.Compose([
+            ReszieNP((48, 48)),
+            FromNP()
+        ])
+    else:
+        train_transform = transforms.Compose([
+            ReszieNP((48, 48)),
+            FromNP(),
+            transforms.RandomHorizontalFlip(),
+            transforms.RandomCrop((48, 48), padding=4)
+        ])
+    test_transform = transforms.Compose([
+        ReszieNP((48, 48)),
+        FromNP()
+    ])
+    train = dvs128_gesture.DVS128Gesture(root=args.data_path, train=True, data_type="frame", frames_number=10, split_by='number', transform=train_transform)
+    test = dvs128_gesture.DVS128Gesture(root=args.data_path, train=False, data_type="frame", frames_number=10, split_by='number', transform=test_transform)
     return train, test
 
 # def get_imagenet_dataset(args):

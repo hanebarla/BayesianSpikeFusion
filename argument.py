@@ -80,6 +80,8 @@ def get_snn_args():
     g_snn.add_argument('--timestep', default=3000, type=int)
     g_snn.add_argument('--burnin', default=500, type=int)
     g_snn.add_argument('--batch_size', default=500, type=int)
+    g_snn.add_argument('--sequential', default=1, type=int)  # boolean
+    g_snn.add_argument('--dvs_parallel', default=0, type=int)  # boolean
 
     ########################################
     # ANN2SNN

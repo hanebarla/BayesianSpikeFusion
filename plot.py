@@ -41,6 +41,11 @@ def plot_differ_mp(args):
     elif ann_args.dataset == "tinyimagenet":
         data_shape = (3, 64, 64)
         num_classes = 200
+    elif ann_args.dataset == "dvsgesture":
+        data_shape = (2, 128, 128)
+        num_classes = 11
+    else:
+        raise ValueError("Invalid dataset name")
     model = model_factory(ann_args, num_classes, data_shape)
     snn = SpikingSDN(model, 128, data_shape)
     energy_per_time, layer_energy_per_time = spikesim_energy(snn, data_shape, 1)
@@ -51,8 +56,10 @@ def plot_differ_mp(args):
     FP_energy_per_time *= 1e-12
     print("BSF_energy: {:.4e}, FP_energy: {:.4e}".format(BSF_energy_per_time, FP_energy_per_time))
 
-    grid_alphas = np.load(os.path.join(root_dir, "division_linear_alpha_grid.npz"))["y"]  # timestep,
-    emp_alphas = np.load(os.path.join(root_dir, "division_linear_alpha_emp.npz"))["y"]  # timestep,
+    grid_alphas = np.load(os.path.join(root_dir, "division_linear_alpha_grid_sequential.npz"))["y"]  # timestep,
+    emp_alphas = np.load(os.path.join(root_dir, "division_linear_alpha_emp_sequential.npz"))["y"]  # timestep,
+    # grid_alphas = np.load(os.path.join(root_dir, "alpha_output_grid_parallel.npz"))["alpha"]  # timestep,
+    # emp_alphas = np.load(os.path.join(root_dir, "alpha_output_emp_parallel.npz"))["alpha"]  # timestep,
 
     ann_args = load_args(os.path.join(root_dir, "command.json"))
     with open(os.path.join(root_dir, "ann_acc.csv"), "r") as f:
@@ -68,8 +75,10 @@ def plot_differ_mp(args):
             data = np.load(ene_acc_file)
             grid_acc = data["grid_acc"]
             emp_acc = data["emp_acc"]
-            fp_energies = data["fp_energies"]
-            bsf_energies = data["bsf_energies"]
+            # fp_energies = data["fp_energies"]
+            fp_energies = np.arange(1, grid_acc.shape[0]+1) * FP_energy_per_time
+            # bsf_energies = data["bsf_energies"]
+            bsf_energies = np.arange(1, grid_acc.shape[0]+1) * BSF_energy_per_time
             final_acc = data["final_acc"]
         else:
             files = os.listdir(exp)
@@ -82,8 +91,9 @@ def plot_differ_mp(args):
         ax.plot(bsf_energies, emp_acc, label="emp")
         ax.plot(fp_energies, final_acc, label="final")
 
-    percentage = 0.99
+    percentage = 0.97
     target_acc = fp_acc*percentage
+    print(fp_acc, target_acc)
 
     fp_exceed_indexes = final_acc >= target_acc
     fp_exceed_energies = fp_energies[fp_exceed_indexes][0]
@@ -95,6 +105,8 @@ def plot_differ_mp(args):
     bsf_exceed_energies_emp = bsf_energies[bsf_exceed_indexes_emp][0]
     # print(bsf_exceed_energies_emp)
 
+    print(final_acc[fp_exceed_indexes][0], grid_acc[fp_exceed_indexes][0], emp_acc[fp_exceed_indexes][0])
+    print(fp_exceed_energies, bsf_exceed_energies_gird, bsf_exceed_energies_emp)
     fp_acc_target, fp_auc = calc_auc(fp_energies, final_acc, fp_exceed_energies)
     bsf_acc_grid, bsf_auc_grid = calc_auc(bsf_energies, grid_acc, fp_exceed_energies)
     bsf_acc_emp, bsf_auc_emp = calc_auc(bsf_energies, emp_acc, fp_exceed_energies)
@@ -154,8 +166,9 @@ def get_ene_acc(files, grid_alphas, emp_alphas, fp_energy_per_time, bsf_energy_p
         final_acc += np.sum(np.argmax(final_fr, axis=2) == labels, axis=1)
         mid_acc += np.sum(np.argmax(mid_fr, axis=2) == labels, axis=1)
 
+        print(labels.shape[0], grid_acc[-1], emp_acc[-1], final_acc[-1], mid_acc[-1])
         tot += labels.shape[0]
-        print("Progress: {}/{}, grid_acc: {:.4f}, emp_acc: {:.4f}".format(i+1, len(files), grid_acc[-1]/tot, emp_acc[-1]/tot))
+        print("Progress: {}/{}, Tot: {}, grid_acc: {:.4f}, emp_acc: {:.4f}".format(i+1, len(files), tot, grid_acc[-1]/tot, emp_acc[-1]/tot))
 
     grid_acc /= tot
     emp_acc /= tot

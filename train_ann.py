@@ -151,16 +151,24 @@ def train(args, train_dataloader, val_dataloader, test_dataloader, mixup_fn, los
 
         logger.info("=== [{} / {}] epochs ===".format(e+1, args.epochs))
         model.train()
-        train_loss, train_acc = train_epoch(args, train_dataloader, mixup_fn, 
-                                            model, loss_weight, criterion, 
-                                            optimizer, device, start_time, logger)
+        if 'dvs' in args.dataset:
+            train_loss, train_acc = train_epoch_dvs(args, train_dataloader, mixup_fn, 
+                                                    model, loss_weight, criterion, 
+                                                    optimizer, device, start_time, logger)
+        else:
+            train_loss, train_acc = train_epoch(args, train_dataloader, mixup_fn, 
+                                                model, loss_weight, criterion, 
+                                                optimizer, device, start_time, logger)
         train_losses.append(train_loss)
         for index in train_acc.keys():
             train_accs[index].append(train_acc[index])
 
         model.eval()
         if val_dataloader is not None:
-            val_loss, val_acc = eval(args, val_dataloader, model, loss_weight, device)
+            if 'dvs' in args.dataset:
+                val_loss, val_acc = eval_dvs(args, val_dataloader, model, loss_weight, device)
+            else:
+                val_loss, val_acc = eval(args, val_dataloader, model, loss_weight, device)
             val_losses.append(val_loss)
             for index in val_acc.keys():
                 val_accs[index].append(val_acc[index])
@@ -197,7 +205,10 @@ def train(args, train_dataloader, val_dataloader, test_dataloader, mixup_fn, los
             loss_weight[args.ic_index] = 0.01 + e / args.epochs * (loss_weight_goal-0.01)
 
     model.eval()
-    test_loss, test_acc = eval(args, test_dataloader, model, loss_weight, device)
+    if 'dvs' in args.dataset:
+        test_loss, test_acc = eval_dvs(args, test_dataloader, model, loss_weight, device)
+    else:
+        test_loss, test_acc = eval(args, test_dataloader, model, loss_weight, device)
     now_time = time.time()
     logger.info("Test loss: {}, Acc (M): {}, Acc (F): {}, Time: {}".format(test_loss, 
                                                                            test_acc[args.ic_index], 
@@ -218,6 +229,7 @@ def train_epoch(args, train_dataloader, mixup_fn, model, loss_weight, criterion,
     scaler = torch.cuda.amp.GradScaler()
 
     for i, (images, labels) in enumerate(train_dataloader):
+        print(images.size())
         # print(images.size())
         optimizer.zero_grad()
         images = images.to(device, non_blocking=True)
@@ -270,6 +282,68 @@ def train_epoch(args, train_dataloader, mixup_fn, model, loss_weight, criterion,
 
     return train_loss, train_acc
 
+def train_epoch_dvs(args, train_dataloader, mixup_fn, model, loss_weight, criterion, optimizer, device, start_time, logger):
+    dlengs = len(train_dataloader.dataset)
+    train_loss = 0
+    train_acc = {args.ic_index: 0, -1: 0}
+
+    scaler = torch.cuda.amp.GradScaler()
+
+    for i, (images, labels) in enumerate(train_dataloader):
+        _, T, _, _, _ = images.size()
+        optimizer.zero_grad()
+        labels = labels.to(device, non_blocking=True)
+
+        loss = 0.0
+        acc_tensors = {args.ic_index: 0, -1: 0}
+        for t in range(T):
+            image = images[:,t,...].to(device, non_blocking=True)
+
+            if mixup_fn is not None:
+                image, labels = mixup_fn(image, labels)
+
+            # Forward
+            with torch.cuda.amp.autocast():
+                outputs = model(image)
+                for index, out in outputs.items():
+                    loss += loss_weight[index] * criterion(out, labels) / T
+
+            for index, out in outputs.items():
+                output_argmax = torch.argmax(out, dim=1)
+                if mixup_fn is not None:
+                    labels_argsmax = torch.argmax(labels, dim=1)
+                    acc_tensor = torch.zeros_like(labels_argsmax)
+                    acc_tensor[output_argmax==labels_argsmax] = 1
+                else:
+                    acc_tensor = torch.zeros_like(labels)
+                    acc_tensor[output_argmax==labels] = 1
+                acc_nums = acc_tensor.sum().item()
+                acc_tensors[index] += acc_nums / images.size(0) / T
+                train_acc[index] += acc_nums / T
+
+        # Backward
+        scaler.scale(loss).backward()
+        scaler.step(optimizer)
+        scaler.update()
+        # loss.backward()
+        # optimizer.step()
+        train_loss += loss.item()
+
+        if (i % args.print_freq) == 0:
+            now_time = time.time()
+            logger.info('[{} / {}] loss: {}, Acc (M) :{}, Acc (F): {}, Time: {}'.format(min(args.batch_size*i, dlengs), 
+                                                                                        dlengs,
+                                                                                        loss.item(), 
+                                                                                        acc_tensors[args.ic_index],
+                                                                                        acc_tensors[-1],
+                                                                                        get_time(start_time, now_time)))
+
+    train_loss /= dlengs
+    for index, out in outputs.items():
+        train_acc[index] /= dlengs
+
+    return train_loss, train_acc
+
 @torch.no_grad()
 def eval(args, test_dataloader, model, loss_weight, device):
     dlengs = len(test_dataloader.dataset)
@@ -291,6 +365,38 @@ def eval(args, test_dataloader, model, loss_weight, device):
             loss += loss_weight[index] * criterion(out, labels)
 
         test_loss += loss.item()
+
+    test_loss /= dlengs
+    for index in test_acc.keys():
+        test_acc[index] /= dlengs
+
+    return test_loss, test_acc
+
+@torch.no_grad()
+def eval_dvs(args, test_dataloader, model, loss_weight, device):
+    dlengs = 0
+    criterion = nn.CrossEntropyLoss()
+
+    test_loss = 0
+    test_acc = {args.ic_index: 0, -1: 0}
+
+    for i, data in enumerate(test_dataloader):
+        images, labels = data
+        _, T, _, _, _ = images.size()
+
+        loss = 0.0
+        for t in range(T):
+            image = images[:,t,...].to(device, non_blocking=True)
+            labels = labels.to(device, non_blocking=True)
+            output = model(image)
+
+            for index, out in output.items():
+                loss += loss_weight[index] * criterion(out, labels) / T
+                output_argmax = torch.argmax(out, dim=1)
+                test_acc[index] += torch.sum(output_argmax==labels).item() / T
+
+        test_loss += loss.item()
+        dlengs += images.size(0)
 
     test_loss /= dlengs
     for index in test_acc.keys():

@@ -58,8 +58,13 @@ class SpikingModule(torch.nn.Module):
 
         return prev
 
-    def reset(self):
-        self.v.zero_()
+    def reset(self, batch_size=None):
+        if batch_size is not None:
+            self.out_shape = (batch_size,) + self.out_shape[1:]
+            self.register_buffer('v', torch.zeros(self.out_shape))
+            self.register_buffer('out', torch.zeros(self.out_shape))
+        else:
+            self.v.zero_()
         self.v += self.init_mem
         self.spikecount = 0
 
@@ -175,9 +180,9 @@ class SpikingResBlock(nn.Module):
         x = self.out(x)
         return x
 
-    def reset(self):
-        self.conv1.reset()
-        self.out.reset()
+    def reset(self, batch_size=None):
+        self.conv1.reset(batch_size=batch_size)
+        self.out.reset(batch_size=batch_size)
 
     def get_count(self):
         return self.conv1.get_count() + self.out.get_count()
@@ -228,10 +233,10 @@ class SpikingResBlock2(nn.Module):
         x = self.out(x)
         return x
 
-    def reset(self):
-        self.conv1.reset()
-        self.convM.reset()
-        self.out.reset()
+    def reset(self, batch_size=None):
+        self.conv1.reset(batch_size=batch_size)
+        self.convM.reset(batch_size=batch_size)
+        self.out.reset(batch_size=batch_size)
 
     def get_count(self):
         return self.conv1.get_count() + self.convM.get_count() + self.out.get_count()
@@ -289,13 +294,13 @@ class SpikingSDN(nn.Module):
 
         return out
 
-    def reset(self):
+    def reset(self, batch_size=None):
         for module in self.feature:
-            module.reset()
+            module.reset(batch_size)
 
         for module in self.classifiers.values():
-            module[0].reset()
-            module[2].reset()
+            module[0].reset(batch_size)
+            module[2].reset(batch_size)
             
     def set_vth(self, vth):
         for module in self.feature:

@@ -15,7 +15,7 @@ import torch
 import numpy as np
 
 from model_ann import model_factory
-from model_snn import SpikingSDN, SpikingConv, SpikingDense, SpikingResBlock
+from model_snn import SpikingSDN, SpikingConv, SpikingDense, SpikingResBlock, SpikingAvgPool
 from argument import get_args
 
 def spikesim_energy(model, data_shape, timestep):
@@ -88,7 +88,15 @@ def spikesim_energy(model, data_shape, timestep):
 
     for _, modules in model.classifiers.items():
         for module in modules:
-            if isinstance(module, SpikingDense):
+            if isinstance(module, SpikingAvgPool):
+                in_ch_list.append(ch)
+                in_dim_list.append(dim)
+
+                out_ch_list.append(ch)
+                out_dim_list.append((1,1))
+                kernel_list.append((module.kernel_size, module.kernel_size))
+                print("AvgPool", ch, dim)
+            elif isinstance(module, SpikingDense):
                 out_ch, in_ch = module.weight.size()
                 
                 parallel_size = 4
