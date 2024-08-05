@@ -1,6 +1,8 @@
 # BayesianSpikeFusion
 This repository provides an implementation of BayesianSpikeFusion to improve the trade-off between energy consumption and accuracy of SNNs.
 
+You can find the full paper at the following link: [BayesianSpikeFusion: accelerating spiking neural network inference via Bayesian fusion of early prediction](https://www.frontiersin.org/journals/neuroscience/articles/10.3389/fnins.2024.1420119/full)
+
 To replicate the experiments in the main text, please follow the steps below:
 1. [Prepare environment](#1-prepare-environment)
 2. [Training](#2-training)
@@ -57,4 +59,19 @@ When executing `plot.py`, you can specify multiple SNN results from which to cal
 
 ```sh
 python plot.py {/path/to/trained_model_saved}/snn_xxx_yyy 
+```
+
+## Citation
+If you find this repository useful, please cite our paper:
+```
+@ARTICLE{10.3389/fnins.2024.1420119,
+    AUTHOR={Habara, Takehiro  and Sato, Takashi  and Awano, Hiromitsu },
+    TITLE={BayesianSpikeFusion: accelerating spiking neural network inference via Bayesian fusion of early prediction},
+    JOURNAL={Frontiers in Neuroscience},
+    VOLUME={18},
+    YEAR={2024},
+    URL={https://www.frontiersin.org/journals/neuroscience/articles/10.3389/fnins.2024.1420119},
+    DOI={10.3389/fnins.2024.1420119},
+    ISSN={1662-453X}
+}
 ```
